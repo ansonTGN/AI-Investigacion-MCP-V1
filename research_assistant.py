@@ -73,7 +73,9 @@ GENERAR_BIB_TODOS: bool = env_bool("GENERAR_BIB_TODOS", True)
 # ============================================================
 # Constantes y Utilidades
 # ============================================================
-DOI_REGEX = re.compile(r'(10\.\d{4,9}/[^\s"\']+)'.encode('utf-8').decode('unicode_escape'), re.IGNORECASE)
+# FIX 1: Se simplifica la expresión regular usando un "raw string" (r'...')
+# Esto elimina el DeprecationWarning y es más legible y eficiente.
+DOI_REGEX = re.compile(r'10\.\d{4,9}/[^\s"\']+', re.IGNORECASE)
 GENERIC_TITLE_REGEXES = [re.compile(pat, re.IGNORECASE) for pat in [r"^\s*doi\s*$", r"^paper$", r"^link$", r"^ref$", r"^paper title for\b"]]
 OA_PATTERNS = ["arxiv.org", "arxiv", "10.48550/arxiv", "biorxiv", "medrxiv", "ncbi.nlm.nih.gov/pmc", "pmc", "mdpi.com", "openreview.net", "osf.io", "zenodo.org", "preprints"]
 
@@ -100,12 +102,20 @@ async def setup_output_dirs() -> None:
 async def guardar_csv(nombre: str, rows: List[Dict[str, Any]]) -> None:
     path = os.path.join(CSV_DIR, nombre)
     if not rows: return
+    # Esta sección ya estaba correcta, pero la dejamos para consistencia
     async with aiofiles.open(path, "w", encoding="utf-8-sig", newline="") as f:
+        # Se corrige para manejar correctamente la escritura de CSV asíncrona
         fields = list(rows[0].keys())
-        writer = csv.DictWriter(f, fieldnames=fields)
+        writer = csv.DictWriter(f, fieldnames=fields) # Usamos DictWriter para robustez
+        
+        # Escribir encabezado
         await f.write(",".join(fields) + "\n")
+        
+        # Escribir filas
         for row in rows:
-            await f.write(",".join(str(row.get(k, "")) for k in fields) + "\n")
+            line = ",".join(f'"{str(row.get(k, "")).replace("\"", "\"\"")}"' for k in fields)
+            await f.write(line + "\n")
+
     print(f"💾 CSV guardado: {path} ({len(rows)} filas)")
 
 async def guardar_json(nombre: str, data: Any) -> None:
@@ -226,9 +236,20 @@ async def step_c_download_papers(rh_client: RemoteMCPClient, dois: List[str], pa
 async def main():
     await setup_output_dirs()
     
-    terminos = (await aiofiles.open("terminos.txt", "r", encoding="utf-8").read()).splitlines()
-    terminos = [t.strip() for t in terminos if t.strip()]
-    topics = construir_topics_desde_terminos(terminos, MAX_TOPICS) # Asumiendo que esta función existe
+    # FIX 2: Se corrige la lectura del archivo usando el patrón 'async with'.
+    # Esto resuelve el 'AttributeError' y es la forma correcta de usar aiofiles.
+    try:
+        async with aiofiles.open("terminos.txt", "r", encoding="utf-8") as f:
+            contenido = await f.read()
+        terminos = [t.strip() for t in contenido.splitlines() if t.strip()]
+        if not terminos:
+            print("⚠️  El archivo 'terminos.txt' está vacío. No hay nada que procesar.")
+            return
+    except FileNotFoundError:
+        print("❌ ERROR: El archivo 'terminos.txt' no se encontró. Por favor, crea este archivo con un término de búsqueda por línea.")
+        return
+
+    topics = construir_topics_desde_terminos(terminos, MAX_TOPICS)
     
     print("Iniciando Asistente de Investigación...")
     print(f"📂 Salidas en: {SALIDAS_DIR}")
@@ -290,11 +311,14 @@ async def main():
 # (Se omiten las funciones auxiliares no refactorizadas para brevedad)
 def construir_topics_desde_terminos(terminos: List[str], max_topics: int) -> List[str]:
     if not terminos: return ["model context protocol"]
-    return [" ".join(terminos[:3])] # Simplificado
+    # Simplificado para el ejemplo
+    return [" ".join(terminos)] 
+
 def slugify(s: str) -> str:
-    s = s.lower().strip()
+    s = str(s).lower().strip()
     s = re.sub(r'[\s\W-]+', '-', s)
-    return s[:50]
+    s = s.strip('-')
+    return s[:75] if len(s) > 75 else s
 
 if __name__ == "__main__":
     # Windows necesita una política de eventos diferente para Subprocess
