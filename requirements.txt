@@ -1,0 +1,25 @@
+# Biblioteca oficial para interactuar con los modelos de IA de Anthropic (Claude).
+anthropic
+
+# Biblioteca para el protocolo MCP (Model Context Protocol), que estandariza la comunicación con herramientas externas.
+mcp
+
+# Biblioteca estándar en Python para realizar peticiones HTTP a APIs y servicios web.
+requests
+
+# Biblioteca para cargar las variables de entorno definidas en el archivo .env en el script de Python.
+python-dotenv
+
+# --- Bibliotecas de IA añadidas ---
+
+# Biblioteca oficial de Google para interactuar con los modelos de IA Gemini.
+google-generativeai
+
+# Biblioteca oficial para interactuar con la API de Groq, que ofrece inferencia rápida de LLMs.
+groq
+
+# Biblioteca para interactuar con Ollama, que permite ejecutar modelos de IA localmente.
+ollama
+
+# Biblioteca oficial para interactuar con los modelos de IA de OpenAI (GPT).
+openai
