@@ -1,14 +1,10 @@
 # research_assistant.py
 # ============================================================
 # Flujo de investigación con rust-research-mcp (MCP server)
-# - Lee conceptos desde terminos.txt y construye topics
-# - Busca papers por topic (MCP: search_papers)
-# - NORMALIZA + ENRIQUECE (BibTeX robusto) ANTES de filtrar por año
-# - Filtra por año, prioriza Open Access, selecciona (LLM o “todos”)
-# - Elige PRIMARIO por “descargabilidad” (arXiv/TechRxiv/PMC/Preprints primero)
-# - Descarga el primario con reintentos rotando DOIs; luego descarga en lote
-# - Extrae metadatos, busca patrones de código y genera bibliografía
-# - Salidas en salidas/<RUN_TAG>/{csv,json,bib,logs}
+# 1. Busca papers por temas para descubrir DOIs.
+# 2. Descarga los papers seleccionados.
+# 3. Vuelve a consultar cada DOI para obtener metadatos enriquecidos (autores, etc.).
+# 4. Genera una bibliografía completa con los datos enriquecidos.
 # ============================================================
 
 import asyncio
@@ -16,20 +12,16 @@ import json
 import os
 import re
 import csv
-import itertools
-import hashlib
-import unicodedata
 from datetime import datetime
-from typing import Any, Iterable, List, Dict, Optional, Tuple
+from typing import Any, Iterable, List, Dict, Optional
 
 from dotenv import load_dotenv
 import aiofiles
 import aiofiles.os
 
 # Módulos del proyecto
-from config_manager import ServerConfig, AppConfig
+from config_manager import ServerConfig
 from mcp_client_manager import MCPClientManager, RemoteMCPClient
-from ai_client_manager import AIClientManager
 
 load_dotenv()
 
@@ -50,41 +42,29 @@ SEPARATE_RUNS_IN_SUBFOLDER: bool = env_bool("SEPARATE_RUNS_IN_SUBFOLDER", True)
 RUN_TAG: Optional[str] = os.getenv("RUN_TAG")
 
 # ——— Búsqueda y filtrado ———
-YEAR_MIN: int = env_int("YEAR_MIN", 2020)
-YEAR_MAX: int = env_int("YEAR_MAX", datetime.now().year)
-INCLUIR_SIN_ANIO: bool = env_bool("INCLUIR_SIN_ANIO", False)
-MAX_TOPICS: int = env_int("MAX_TOPICS", 3)
+MAX_TOPICS: int = env_int("MAX_TOPICS", 10)
 MAX_RESULTS_PER_TOPIC: int = env_int("MAX_RESULTS_PER_TOPIC", 10)
-
-# ——— Preferencias ———
-OPEN_ACCESS_PREFERRED: bool = env_bool("OPEN_ACCESS_PREFERRED", True)
-AVOID_SOURCES_FOR_PRIMARY: List[str] = os.getenv("AVOID_SOURCES_FOR_PRIMARY", "ssrn").split(',')
 
 # ——— Descarga de PDFs ———
 DOWNLOAD_ALL_PAPERS: bool = env_bool("DOWNLOAD_ALL_PAPERS", False)
-DOWNLOAD_ONLY_OA: bool = env_bool("DOWNLOAD_ONLY_OA", False)
 SELECT_TOP_K: int = env_int("SELECT_TOP_K", 5)
 MAX_PARALLEL_DOWNLOADS: int = env_int("MAX_PARALLEL_DOWNLOADS", 4)
-
-# ——— Bibliografía ———
-BIB_FORMAT: str = os.getenv("BIB_FORMAT", "bibtex")
-GENERAR_BIB_TODOS: bool = env_bool("GENERAR_BIB_TODOS", True)
 
 # ============================================================
 # Constantes y Utilidades
 # ============================================================
-# FIX 1: Se simplifica la expresión regular usando un "raw string" (r'...')
-# Esto elimina el DeprecationWarning y es más legible y eficiente.
-DOI_REGEX = re.compile(r'10\.\d{4,9}/[^\s"\']+', re.IGNORECASE)
-GENERIC_TITLE_REGEXES = [re.compile(pat, re.IGNORECASE) for pat in [r"^\s*doi\s*$", r"^paper$", r"^link$", r"^ref$", r"^paper title for\b"]]
-OA_PATTERNS = ["arxiv.org", "arxiv", "10.48550/arxiv", "biorxiv", "medrxiv", "ncbi.nlm.nih.gov/pmc", "pmc", "mdpi.com", "openreview.net", "osf.io", "zenodo.org", "preprints"]
+DOI_REGEX = re.compile(r'^10\.\d{4,9}/.+$')
 
 # Directorios de salida globales
 SALIDAS_DIR, CSV_DIR, LOGS_DIR, BIB_DIR, JSON_DIR = "", "", "", "", ""
+DOWNLOADS_DIR = ""
 
 async def setup_output_dirs() -> None:
-    """Configura los directorios de salida de forma asíncrona."""
-    global SALIDAS_DIR, CSV_DIR, LOGS_DIR, BIB_DIR, JSON_DIR
+    """Configura los directorios de salida y descarga de forma asíncrona."""
+    global SALIDAS_DIR, CSV_DIR, LOGS_DIR, BIB_DIR, JSON_DIR, DOWNLOADS_DIR
+    
+    DOWNLOADS_DIR = os.getenv("RESEARCH_PAPERS_DIR", os.path.join(os.getcwd(), "ResearchPapers"))
+    
     base = "salidas"
     if SEPARATE_RUNS_IN_SUBFOLDER:
         tag = RUN_TAG or datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -93,29 +73,24 @@ async def setup_output_dirs() -> None:
     SALIDAS_DIR = base
     CSV_DIR, LOGS_DIR, BIB_DIR, JSON_DIR = (os.path.join(base, d) for d in ["csv", "logs", "bib", "json"])
     
-    for d in (base, CSV_DIR, LOGS_DIR, BIB_DIR, JSON_DIR):
+    for d in (base, CSV_DIR, LOGS_DIR, BIB_DIR, JSON_DIR, DOWNLOADS_DIR):
         await aiofiles.os.makedirs(d, exist_ok=True)
 
-# ... (Las funciones de utilidad como normalizar_texto, slugify, etc., se mantienen igual) ...
+def slugify(s: str) -> str:
+    s = str(s).lower().strip()
+    s = re.sub(r'[\s\W-]+', '-', s)
+    s = s.strip('-')
+    return s[:75] if len(s) > 75 else s
 
-# Funciones de guardado asíncronas
 async def guardar_csv(nombre: str, rows: List[Dict[str, Any]]) -> None:
     path = os.path.join(CSV_DIR, nombre)
     if not rows: return
-    # Esta sección ya estaba correcta, pero la dejamos para consistencia
     async with aiofiles.open(path, "w", encoding="utf-8-sig", newline="") as f:
-        # Se corrige para manejar correctamente la escritura de CSV asíncrona
         fields = list(rows[0].keys())
-        writer = csv.DictWriter(f, fieldnames=fields) # Usamos DictWriter para robustez
-        
-        # Escribir encabezado
         await f.write(",".join(fields) + "\n")
-        
-        # Escribir filas
         for row in rows:
-            line = ",".join(f'"{str(row.get(k, "")).replace("\"", "\"\"")}"' for k in fields)
-            await f.write(line + "\n")
-
+            values = [f'"{str(row.get(k, "")).replace("\"", "\"\"")}"' for k in fields]
+            await f.write(",".join(values) + "\n")
     print(f"💾 CSV guardado: {path} ({len(rows)} filas)")
 
 async def guardar_json(nombre: str, data: Any) -> None:
@@ -128,13 +103,9 @@ async def guardar_bib(nombre: str, contenido: str) -> None:
     path = os.path.join(BIB_DIR, nombre)
     async with aiofiles.open(path, "w", encoding="utf-8") as f:
         await f.write(contenido)
-    print(f"💾 BibTeX guardado: {path}")
-
-# ... (El resto de las funciones de parsing, normalización y lógica se mantienen,
-#      pero se integran en el nuevo flujo refactorizado a continuación) ...
+    print(f"📚 Bibliografía guardada: {path}")
 
 def extract_text(blobs: Optional[Iterable[Any]]) -> str:
-    # (Función sin cambios)
     parts: List[str] = []
     if not blobs: return ""
     for b in blobs:
@@ -142,41 +113,51 @@ def extract_text(blobs: Optional[Iterable[Any]]) -> str:
         elif isinstance(b, str): parts.append(b)
     return "\n".join(parts).strip()
 
-def extract_json_any(raw_text: str) -> Any:
-    # (Función sin cambios, asume que es lo suficientemente rápida para no necesitar `to_thread`)
-    try: return json.loads(raw_text)
-    except Exception: pass
-    m = re.search(r"```json\s*(.*?)\s*```", raw_text, re.DOTALL)
-    if m:
-        try: return json.loads(m.group(1).strip())
-        except Exception: pass
-    return None
-
-def normalize_papers(data: Any) -> List[Dict[str, Any]]:
-    # (Función sin cambios)
+def parse_text_response_to_papers(raw_text: str, topic: str) -> List[Dict[str, Any]]:
+    """Parsea la respuesta de texto formateada del servidor Rust para la búsqueda."""
     papers = []
-    items = data if isinstance(data, list) else (data.get("results") if isinstance(data, dict) else [])
-    for it in items:
-        if isinstance(it, dict):
-            doi = it.get("doi")
-            papers.append({
-                "title": it.get("title"), "doi": doi, "year": it.get("year"),
-                "url": it.get("url") or (f"https://doi.org/{doi}" if doi else None),
-                "source": it.get("source")
-            })
+    content = raw_text.split('\n\n', 1)[-1]
+    paper_blocks = re.split(r'\n\n(?=\d+\.\s)', content)
+
+    for block in paper_blocks:
+        if not block.strip(): continue
+        paper_data = {"topic": topic, "title": None, "doi": None, "source": None, "year": None}
+        
+        title_match = re.search(r'^\d+\.\s*(.*?)\s*\(Relevance:', block)
+        if title_match: paper_data['title'] = title_match.group(1).strip()
+        
+        doi_match = re.search(r'📖\s*DOI:\s*(.*)', block)
+        if doi_match:
+            doi_str = doi_match.group(1).strip()
+            paper_data['doi'] = doi_str if doi_str and " " not in doi_str else None
+
+        source_match = re.search(r'🔍\s*Source:\s*(.*)', block)
+        if source_match: paper_data['source'] = source_match.group(1).strip()
+            
+        year_match = re.search(r'📅\s*Year:\s*(\d{4})', block)
+        if year_match: paper_data['year'] = int(year_match.group(1).strip())
+            
+        if paper_data.get('title'):
+            paper_data['url'] = f"https://doi.org/{paper_data['doi']}" if paper_data.get('doi') else None
+            paper_data['is_valid_doi'] = bool(paper_data['doi'] and DOI_REGEX.match(paper_data['doi']))
+            papers.append(paper_data)
+            
     return papers
 
 async def step_a_search_papers(rh_client: RemoteMCPClient, topics: List[str]) -> List[Dict[str, Any]]:
-    """Busca papers para cada topic y los devuelve combinados."""
+    """Busca papers para cada topic y los devuelve combinados y deduplicados."""
     all_papers = []
     for topic in topics:
         print(f"\n--- 🔎 Buscando topic: '{topic}' ---")
-        res = await rh_client.call_tool("search_papers", {"query": topic, "limit": MAX_RESULTS_PER_TOPIC})
-        data = extract_json_any(extract_text(res))
-        papers = normalize_papers(data)
-        all_papers.extend(papers)
-        print(f"  -> Encontrados {len(papers)} resultados.")
-    # Deduplicar aquí es una buena práctica
+        try:
+            res = await rh_client.call_tool("search_papers", {"query": topic, "limit": MAX_RESULTS_PER_TOPIC})
+            raw_text_content = extract_text(res)
+            papers = parse_text_response_to_papers(raw_text_content, topic)
+            all_papers.extend(papers)
+            print(f"  -> Encontrados {len(papers)} resultados para '{topic}'.")
+        except Exception as e:
+            print(f"  ✗ Error buscando topic '{topic}': {e}")
+    
     seen_dois = set()
     unique_papers = []
     for p in all_papers:
@@ -185,27 +166,27 @@ async def step_a_search_papers(rh_client: RemoteMCPClient, topics: List[str]) ->
             seen_dois.add(doi)
             unique_papers.append(p)
         elif not doi:
-             unique_papers.append(p) # Mantener los que no tienen DOI por ahora
+             unique_papers.append(p)
+    
+    print(f"\n✨ Total de papers únicos encontrados: {len(unique_papers)}")
     return unique_papers
 
-async def step_b_select_papers(ai_client: AIClientManager, papers: List[Dict[str, Any]]) -> List[str]:
-    """Filtra y selecciona los papers a descargar, usando LLM si es necesario."""
-    # Aquí iría la lógica de filtrado por año y la selección (LLM o todos)
+async def step_b_select_papers(papers: List[Dict[str, Any]]) -> List[str]:
+    """Filtra y selecciona los DOIs válidos para descargar."""
     print("\n--- 🧠 Seleccionando papers para descarga ---")
     
-    # Placeholder: por ahora, selecciona todos los que tienen DOI
-    selected_dois = [p['doi'] for p in papers if p.get('doi')]
+    selected_dois = [p['doi'] for p in papers if p.get('is_valid_doi')]
     
     if DOWNLOAD_ALL_PAPERS:
         print(f"  -> Selección: TODOS ({len(selected_dois)} papers)")
         return selected_dois
     else:
-        # Aquí se implementaría la llamada al LLM
-        print(f"  -> Selección: TOP {SELECT_TOP_K} (Lógica LLM pendiente)")
+        print(f"  -> Selección: TOP {SELECT_TOP_K} (usando los primeros encontrados)")
         return selected_dois[:SELECT_TOP_K]
 
 async def step_c_download_papers(rh_client: RemoteMCPClient, dois: List[str], papers_metadata: List[Dict]) -> Dict[str, Dict]:
     """Descarga los papers seleccionados en paralelo."""
+    if not dois: return {}
     print(f"\n--- 📥 Descargando {len(dois)} papers en paralelo (max {MAX_PARALLEL_DOWNLOADS}) ---")
     semaphore = asyncio.Semaphore(MAX_PARALLEL_DOWNLOADS)
     
@@ -216,28 +197,104 @@ async def step_c_download_papers(rh_client: RemoteMCPClient, dois: List[str], pa
             title = doi_map.get(doi, {}).get('title', 'untitled')
             filename = f"{slugify(title)}_{slugify(doi)}.pdf"
             try:
-                res = await rh_client.call_tool("download_paper", {"doi": doi, "filename": filename})
-                data = extract_json_any(extract_text(res))
-                if data and data.get("file_path"):
-                    print(f"  ✓ Descargado: {doi}")
-                    return doi, {"status": "ok", "path": data["file_path"], "title": title}
+                res = await rh_client.call_tool("download_paper", {"doi": doi, "filename": filename, "directory": DOWNLOADS_DIR})
+                raw_response_text = extract_text(res)
+                
+                success_match = re.search(r'File:\s*(.*?)\n', raw_response_text)
+                
+                if ("Download successful!" in raw_response_text or "File already exists" in raw_response_text) and success_match:
+                    file_path = success_match.group(1).strip()
+                    print(f"  ✓ Descargado (o ya existía): {doi}")
+                    return doi, {"status": "ok", "path": file_path, "title": title}
                 else:
-                    print(f"  ✗ Fallo (sin path): {doi}")
-                    return doi, {"status": "failed", "reason": "No file path in response"}
+                    print(f"  ✗ Fallo en descarga: {doi}")
+                    return doi, {"status": "failed", "reason": raw_response_text.strip()}
+
             except Exception as e:
-                print(f"  ✗ Error: {doi} -> {e}")
+                print(f"  ✗ Error grave durante la descarga de {doi}: {e}")
                 return doi, {"status": "error", "reason": str(e)}
 
     tasks = [_download_one(doi) for doi in dois]
     results = await asyncio.gather(*tasks)
     return {doi: result for doi, result in results}
 
-# Flujo principal refactorizado
+def paper_dict_to_bibtex_entry(paper: Dict[str, Any]) -> str:
+    """Convierte un diccionario de paper enriquecido en una entrada BibTeX string."""
+    # Crea una clave única a partir del primer autor y año
+    author_lastname = "unknown"
+    if paper.get("authors"):
+        try:
+            author_lastname = slugify(paper["authors"].split(',')[0].split(' ')[-1])
+        except: # noqa
+            pass # Mantener 'unknown' si el formato del autor es inesperado
+    
+    year_str = str(paper.get('year', 'nodate'))
+    key = f"{author_lastname}{year_str}"
+
+    entry = f"@article{{{key},\n"
+    if paper.get('title'):
+        entry += f"  title     = {{{{{paper['title']}}}}},\n"
+    if paper.get('authors'):
+        entry += f"  author    = {{{paper['authors']}}},\n"
+    if paper.get('year'):
+        entry += f"  year      = {{{paper['year']}}},\n"
+    if paper.get('journal'):
+        entry += f"  journal   = {{{paper['journal']}}},\n"
+    if paper.get('doi'):
+        entry += f"  doi       = {{{paper['doi']}}},\n"
+    entry += "}"
+    return entry
+
+async def step_d_generate_bibliography(rh_client: RemoteMCPClient, papers: List[Dict[str, Any]]) -> str:
+    """Enriquece los metadatos de los papers y genera una bibliografía completa."""
+    papers_with_doi = [p for p in papers if p.get('is_valid_doi')]
+    if not papers_with_doi:
+        return "% No se encontraron papers con DOI válido para generar la bibliografía."
+
+    print(f"\n--- 📚 Generando Bibliografía ---")
+    print(f"  -> Enriqueciendo metadatos para {len(papers_with_doi)} papers...")
+
+    enriched_papers = []
+    for paper in papers_with_doi:
+        try:
+            print(f"     - Obteniendo detalles para DOI: {paper['doi']}")
+            # Llama a search_papers con el DOI para obtener metadatos ricos
+            res = await rh_client.call_tool("search_papers", {"query": paper['doi'], "limit": 1})
+            raw_text = extract_text(res)
+            
+            # Parsea la respuesta rica (puede tener más campos)
+            # Usamos un parser simple aquí, asumiendo un formato similar
+            enriched_data = paper.copy() # Empezamos con los datos que ya tenemos
+            
+            authors_match = re.search(r'👤\s*Authors:\s*(.*)', raw_text)
+            if authors_match:
+                enriched_data['authors'] = authors_match.group(1).strip()
+
+            journal_match = re.search(r' L Journal:\s*(.*)', raw_text)
+            if journal_match:
+                enriched_data['journal'] = journal_match.group(1).strip()
+            
+            enriched_papers.append(enriched_data)
+        except Exception as e:
+            print(f"  ✗ Error enriqueciendo {paper.get('doi')}: {e}. Usando datos básicos.")
+            enriched_papers.append(paper) # Añadir con datos básicos si falla
+
+    print(f"  -> Creando entradas BibTeX...")
+    bib_entries = [paper_dict_to_bibtex_entry(p) for p in enriched_papers]
+        
+    print("  -> Bibliografía generada con éxito.")
+    return "\n\n".join(bib_entries)
+
+def construir_topics_desde_terminos(terminos: List[str], max_topics: int) -> List[str]:
+    if not terminos: return ["model context protocol"]
+    topics_a_buscar = terminos[:max_topics]
+    print(f"✅ Construidos {len(topics_a_buscar)} topics para la búsqueda: {topics_a_buscar}")
+    return topics_a_buscar
+
 async def main():
+    """Flujo principal que orquesta la investigación."""
     await setup_output_dirs()
     
-    # FIX 2: Se corrige la lectura del archivo usando el patrón 'async with'.
-    # Esto resuelve el 'AttributeError' y es la forma correcta de usar aiofiles.
     try:
         async with aiofiles.open("terminos.txt", "r", encoding="utf-8") as f:
             contenido = await f.read()
@@ -246,21 +303,17 @@ async def main():
             print("⚠️  El archivo 'terminos.txt' está vacío. No hay nada que procesar.")
             return
     except FileNotFoundError:
-        print("❌ ERROR: El archivo 'terminos.txt' no se encontró. Por favor, crea este archivo con un término de búsqueda por línea.")
+        print("❌ ERROR: El archivo 'terminos.txt' no se encontró.")
         return
 
     topics = construir_topics_desde_terminos(terminos, MAX_TOPICS)
     
-    print("Iniciando Asistente de Investigación...")
+    print(f"\nIniciando Asistente de Investigación...")
     print(f"📂 Salidas en: {SALIDAS_DIR}")
+    print(f"📥 PDFs se guardarán en: {DOWNLOADS_DIR}")
     
     server_configs = ServerConfig.get_server_configs()
     mcp_manager = MCPClientManager(server_configs)
-    ai_client = AIClientManager(
-        provider=AppConfig.get_ai_provider(),
-        api_key=AppConfig.get_api_key(AppConfig.get_ai_provider()),
-        model=AppConfig.get_ai_model(AppConfig.get_ai_provider())
-    )
     
     try:
         print("\n🔗 Conectando al servidor de Research Hub...")
@@ -271,57 +324,32 @@ async def main():
             return
         print("✅ Conectado.")
 
-        # PASO A: Búsqueda
         found_papers = await step_a_search_papers(rh_client, topics)
         if not found_papers:
-            print("⚠️ No se encontraron papers. Terminando.")
+            print("\n⚠️ No se encontraron papers en ninguna de las búsquedas. Terminando.")
             return
+        
+        await guardar_json("00_resultados_completos.json", found_papers)
         await guardar_csv("01_papers_encontrados.csv", found_papers)
         
-        # PASO B: Selección
-        selected_dois = await step_b_select_papers(ai_client, found_papers)
+        selected_dois = await step_b_select_papers(found_papers)
         if not selected_dois:
-            print("⚠️ No se seleccionaron papers para descargar. Terminando.")
-            return
-        await guardar_json("02_dois_seleccionados.json", {"dois": selected_dois})
+            print("\n⚠️ No se seleccionaron papers con DOI válido para descargar.")
+        else:
+            await guardar_json("02_dois_seleccionados.json", {"dois": selected_dois})
+            download_manifest = await step_c_download_papers(rh_client, selected_dois, found_papers)
+            await guardar_json("03_manifiesto_descarga.json", download_manifest)
 
-        # PASO C: Descarga
-        download_manifest = await step_c_download_papers(rh_client, selected_dois, found_papers)
-        downloaded_files = [v for v in download_manifest.values() if v.get("status") == "ok"]
-        await guardar_json("03_manifiesto_descarga.json", download_manifest)
-
-        if not downloaded_files:
-            print("⚠️ No se pudo descargar ningún paper. Terminando.")
-            return
-
-        # PASOS D y E (Análisis y Bibliografía) se ejecutarían aquí
-        print("\n--- 🔬 Análisis y Bibliografía (Pasos D y E) ---")
-        # Placeholder para la lógica de búsqueda de código y generación de bibliografía
-        primary_paper_path = downloaded_files[0]['path']
-        print(f"  -> Analizando paper primario: {primary_paper_path}")
-        # ... llamar a 'search_code' ...
-        # ... llamar a 'generate_bibliography' ...
-        bib_content = "BibTeX content placeholder."
+        bib_content = await step_d_generate_bibliography(rh_client, found_papers)
         await guardar_bib("bibliografia_final.bib", bib_content)
+        
+        print("\n🎉 Proceso completado con éxito.")
 
     finally:
         print("\n🏁 Finalizando y cerrando conexiones...")
         await mcp_manager.close_all_clients()
 
-# (Se omiten las funciones auxiliares no refactorizadas para brevedad)
-def construir_topics_desde_terminos(terminos: List[str], max_topics: int) -> List[str]:
-    if not terminos: return ["model context protocol"]
-    # Simplificado para el ejemplo
-    return [" ".join(terminos)] 
-
-def slugify(s: str) -> str:
-    s = str(s).lower().strip()
-    s = re.sub(r'[\s\W-]+', '-', s)
-    s = s.strip('-')
-    return s[:75] if len(s) > 75 else s
-
 if __name__ == "__main__":
-    # Windows necesita una política de eventos diferente para Subprocess
     if os.name == 'nt':
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
     asyncio.run(main())
