@@ -1,9 +1,3 @@
-¡Excelente idea! Añadir la referencia al repositorio `research_hub_mcp` es importante para dar el crédito correspondiente y clarificar la arquitectura.
-
-Aquí tienes la versión actualizada del `README.md` que incluye la nueva referencia en las tres secciones de idioma.
-
----
-
 # AI Trend Research Engine
 
 Basado en los repositorios:
