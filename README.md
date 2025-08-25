@@ -1,9 +1,8 @@
 # AI Trend Research Engine
 
-Basado en los repositorios:
-[EmpowerHerDev/ai-trend-research-system](https://github.com/EmpowerHerDev/ai-trend-research-system) y [Ladvien/research_hub_mcp](https://github.com/Ladvien/research_hub_mcp)
+Un sistema automatizado y modular para la investigación de tendencias en Inteligencia Artificial. Recopila, procesa y analiza datos de múltiples fuentes para descubrir *insights*, generar informes y mantener un ciclo de vida de palabras clave en constante evolución.
 
-![Python Version](https://img.shields.io/badge/python-3.9%2B-blue)![License](https://img.shields.io/badge/license-MIT-green)![Status](https://img.shields.io/badge/status-activo-brightgreen)
+![Python Version](https://img.shields.io/badge/python-3.9%2B-blue)![License](https://img.shields.io/badge/license-MIT-green)![Status](https://img.shields.io/badge/status-activo-brightgreen)![Built with](https://img.shields.io/badge/built%20with-asyncio-purple)
 
 <p align="center">
   <strong>Languages:</strong>
@@ -19,130 +18,159 @@ Basado en los repositorios:
 <details>
 <summary><strong>Table of Contents</strong></summary>
 
-- [🚀 Key Features](#-key-features)
-- [🏛️ Project Architecture](#️-project-architecture)
-- [🛠️ Installation and Setup](#️-installation-and-setup)
-  - [1. Prerequisites](#1-prerequisites)
-  - [2. Clone the Repository](#2-clone-the-repository)
-  - [3. Install Python Dependencies](#3-install-python-dependencies)
-  - [4. Configure Environment Variables](#4-configure-environment-variables)
-  - [5. Set Up the Database (Supabase)](#5-set-up-the-database-supabase)
-- [▶️ Usage](#️-usage)
-  - [Daily Trend Research](#daily-trend-research)
-  - [Deep Dive Research](#deep-dive-research)
-- [🤝 Contributing](#-contributing)
-- [📄 License](#-license)
+- [🚀 Key Features](#-key-features-1)
+- [🏛️ System Architecture](#️-system-architecture)
+- [💻 Tech Stack](#-tech-stack)
+- [🛠️ Installation and Setup](#️-installation-and-setup-1)
+- [▶️ Usage](#️-usage-1)
+- [🤝 Contributing](#-contributing-1)
+- [📄 License](#-license-1)
 
 </details>
 
-An automated and modular system for researching trends in Artificial Intelligence. It collects and processes data from multiple platforms (GitHub, YouTube, ArXiv, etc.), uses language models (LLMs) to extract insights, discover new keywords, and generates comprehensive reports in multiple formats (JSON, Notion, Supabase).
+### AI Trend Research Engine
+
+An automated and modular system for researching trends in Artificial Intelligence. It collects and processes data from multiple platforms (GitHub, YouTube, ArXiv, etc.), uses large language models (LLMs) to extract insights, discover new keywords, and generates comprehensive reports in multiple formats (JSON, Notion, Supabase).
 
 **Note:** This project was developed by modifying the [EmpowerHerDev/ai-trend-research-system](https://github.com/EmpowerHerDev/ai-trend-research-system) project and integrating the custom research server from [Ladvien/research_hub_mcp](https://github.com/Ladvien/research_hub_mcp). The result is a flexible and modular system that now supports multiple large language model (LLM) providers, including **OpenAI (GPT), Google (Gemini), Anthropic (Claude), Groq, and Ollama**. This work is also part of a personal learning journey in the field of artificial intelligence agent development.
 
 ### 🚀 Key Features
 
 -   **Multi-Platform Research**: Gathers data from YouTube, GitHub, web searches, ArXiv, HackerNews, and a custom paper research engine.
--   **AI-Powered Processing**: Uses LLMs (OpenAI, Gemini, Groq, Anthropic, Ollama) for advanced tasks such as:
-    -   Intelligent extraction of new keywords.
-    -   Generation of dynamic and contextual recommendations.
-    -   Translation of search terms for multilingual queries.
--   **Asynchronous Architecture**: Built with `asyncio` for high concurrency and efficiency in network operations and process handling.
--   **Report Generation**: Automatically creates detailed reports in:
-    -   **JSON**: Local files for archiving and analysis.
-    -   **Notion**: Structured and easy-to-read pages in your workspace.
-    -   **Supabase**: Records in a PostgreSQL database for long-term persistence.
--   **Keyword Management**: Maintains a lifecycle for keywords, with a master catalog, an active list for research, and a history of executions.
--   **Highly Configurable**: All settings (API keys, AI model selection, file paths) are managed through a `.env` file for easy portability and security.
--   **Standard Protocol**: Uses the **Model Context Protocol (MCP)** to communicate with each platform's servers, ensuring a standardized and decoupled interface.
+-   **Multi-LLM Support**: Seamlessly switch between different LLM providers like OpenAI, Gemini, Groq, Anthropic, and local models with Ollama.
+-   **AI-Powered Analysis**: Uses LLMs for advanced tasks such as intelligent keyword extraction, dynamic recommendation generation, and multilingual query translation.
+-   **Asynchronous Architecture**: Built with `asyncio` for high concurrency and efficiency in handling network I/O and managing multiple data source servers.
+-   **Automated Reporting**: Automatically creates detailed reports in **JSON** (for local archiving), **Notion** (for collaborative workspaces), and **Supabase** (for long-term data persistence).
+-   **Dynamic Keyword Lifecycle**: Implements a full lifecycle for keywords: discovery, scoring, active research, and history tracking, all managed through simple JSON files.
+-   **Decoupled & Standardized**: Uses the **Model Context Protocol (MCP)** to communicate with each platform's server, ensuring a standardized, modular, and easily extensible interface.
+-   **Highly Configurable**: All settings (API keys, AI model selection, file paths) are managed through a single `.env` file for easy portability and security.
 
-### 🏛️ Project Architecture
+### 🏛️ System Architecture
 
-The system is designed with a modular and decoupled architecture to facilitate maintenance and extension.
+The system is designed with a modular architecture where a central orchestrator manages various specialized components. The communication with external data sources is standardized through MCP servers.
 
--   `ai_trend_researcher.py`: The main orchestrator that runs the daily research workflow.
--   `config_manager.py`: Centralizes the loading and validation of all configurations from the `.env` file.
--   `mcp_client_manager.py`: Manages the lifecycle (connection, calls, closing) of clients for each platform's MCP servers.
--   `platform_handlers.py`: Contains the specific logic to interact with each platform (e.g., `YouTubeHandler`, `GitHubHandler`), process their data, and standardize it.
--   `data_processor.py`: Handles data analysis, keyword extraction, and recommendation generation using both heuristics and LLMs.
--   `ai_client_manager.py`: Acts as a factory to interact uniformly with different language model providers (OpenAI, Gemini, etc.).
--   `report_generator.py`: Generates the final reports in all supported formats (JSON, Notion, Supabase).
--   `keyword_manager.py`: Manages the keyword database in JSON files.
--   `research_assistant.py`: An advanced script for performing deep research dives using the custom `research_hub` server.
+```mermaid
+graph TD
+    subgraph "Core Engine"
+        A[ai_trend_researcher.py] --> B{KeywordManager};
+        A --> C{MCPClientManager};
+        A --> D{DataProcessor};
+        A --> E{ReportManager};
+    end
+
+    subgraph "AI Integration"
+        F[AIClientManager] -- Manages --> G[OpenAI, Gemini, Groq, ...];
+        D -- Uses --> F;
+    end
+
+    subgraph "Data Sources (via MCP)"
+        C -- Connects to --> H[YouTube Server];
+        C -- Connects to --> I[GitHub Server];
+        C -- Connects to --> J[ArXiv Server];
+        C -- Connects to --> K[Web/HackerNews...];
+        C -- Connects to --> L[ResearchHub Server];
+    end
+
+    subgraph "Output Reports"
+        E -- Generates --> M[JSON Files];
+        E -- Generates --> N[Notion Pages];
+        E -- Generates --> O[Supabase Records];
+    end
+
+    B --> A;
+```
+
+-   **Orchestrator (`ai_trend_researcher.py`)**: The main script that coordinates the entire research workflow, from loading keywords to generating final reports.
+-   **Configuration (`config_manager.py`)**: Loads and validates all environment variables and server settings.
+-   **Connectivity (`mcp_client_manager.py`)**: Manages the lifecycle (start, connect, call, stop) of all MCP servers for the data platforms.
+-   **AI Factory (`ai_client_manager.py`)**: Provides a unified interface to interact with various LLM providers.
+-   **Platform Logic (`platform_handlers.py`)**: Contains the specific logic for querying each platform and standardizing its response.
+-   **Analysis (`data_processor.py`)**: Uses LLMs and heuristics to extract new keywords, score them, and generate actionable recommendations.
+-   **Reporting (`report_generator.py`)**: Creates the final reports in all supported formats.
+-   **Keyword Database (`keyword_manager.py`)**: Manages the state of keywords across research cycles.
+
+### 💻 Tech Stack
+
+-   **Backend**: Python 3.9+
+-   **Concurrency**: `asyncio`
+-   **AI Providers**: OpenAI, Google Gemini, Anthropic Claude, Groq, Ollama
+-   **Tool Protocol**: Model Context Protocol (MCP)
+-   **Dependencies**: `python-dotenv`, `aiofiles`, provider-specific SDKs (e.g., `openai`, `google-generativeai`)
+-   **Prerequisites**: Node.js & npm (to run community MCP servers via `npx`), Rust (optional, to compile the `research_hub` server)
 
 ### 🛠️ Installation and Setup
-
-Follow these steps to get the project running in your local environment.
 
 #### 1. Prerequisites
 
 -   **Python 3.9+**
 -   **Node.js and npm** (required for `npx`, which runs the community's MCP servers).
 -   **Git**
--   (Optional) **Rust Compiler**, if you want to compile the `research_hub` executable from the source code.
+-   (Optional) **Rust Compiler**, if you want to compile the `research_hub` executable from the source code. Otherwise, you can use a pre-compiled binary.
 
 #### 2. Clone the Repository
 
 ```bash
-git clone https://github.com/your_user/your_repository.git
-cd your_repository
+git clone https://github.com/your-user/your-repository.git
+cd your-repository
 ```
 
 #### 3. Install Python Dependencies
 
-Create a virtual environment (recommended) and install the required libraries.
+It is highly recommended to use a virtual environment.
 
 ```bash
 python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
+# On macOS/Linux:
+source venv/bin/activate
+# On Windows:
+venv\Scripts\activate
+
 pip install -r requirements.txt
 ```
 
 #### 4. Configure Environment Variables
 
-This is the most important step. The project is controlled via a `.env` file.
+This is the most critical step.
 
-1.  Copy the example file:
+1.  Create your environment file from the example:
     ```bash
     cp .env.example .env
     ```
-2.  Edit the `.env` file with a text editor and fill in all the necessary API keys and paths.
+2.  Open the `.env` file and fill in your API keys and paths. You only need to fill in the keys for the services you intend to use.
 
-```env
-# .env.example
+    ```env
+    # .env
 
-# --- API Keys (Required for the platforms you use) ---
-YOUTUBE_API_KEY=AIzaSy...
-GITHUB_PERSONAL_ACCESS_TOKEN=ghp_...
-NOTION_API_KEY=secret_...
-SUPABASE_ACCESS_TOKEN=eyJhbGciOi...
-SILICONFLOW_API_KEY= # Optional, for the ArXiv server
+    # --- AI Provider Configuration ---
+    # Choose one: "openai", "gemini", "groq", "anthropic", "ollama"
+    AI_PROVIDER="openai"
 
-# --- Notion Configuration (Required if using Notion) ---
-NOTION_PARENT_PAGE_ID=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+    # Fill in the API keys for the providers you might use.
+    OPENAI_API_KEY="sk-..."
+    GOOGLE_API_KEY="AIzaSy..."
+    GROQ_API_KEY="gsk_..."
+    ANTHROPIC_API_KEY="sk-ant-..."
+    # No key needed for Ollama
 
-# --- System Path Configuration (IMPORTANT!) ---
-# Modify these paths to point to directories on your machine.
-RESEARCH_PAPERS_DIR="/home/user/documents/research-papers"
-RESEARCH_HUB_EXECUTABLE="/home/user/projects/rust-research-mcp/target/release/rust-research-mcp"
+    # --- (Optional) Specific AI Models ---
+    AI_MODEL_OPENAI="gpt-4o"
+    AI_MODEL_GEMINI="gemini-1.5-flash"
+    # ... and so on for other providers
 
-# --- AI Provider Configuration ---
-# Choose one: "openai", "gemini", "groq", "anthropic", "ollama"
-AI_PROVIDER="openai"
+    # --- API Keys for Data Sources ---
+    YOUTUBE_API_KEY=AIzaSy...
+    GITHUB_PERSONAL_ACCESS_TOKEN=ghp_...
 
-# Fill in the API key for your chosen provider.
-OPENAI_API_KEY="sk-..."
-GOOGLE_API_KEY="AIzaSy..."
-GROQ_API_KEY="gsk_..."
-ANTHROPIC_API_KEY="sk-ant-..."
+    # --- API Keys for Report Outputs ---
+    NOTION_API_KEY=secret_...
+    NOTION_PARENT_PAGE_ID=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+    SUPABASE_ACCESS_TOKEN=eyJhbGciOi...
 
-# --- (Optional) Specific AI Models ---
-# If left blank, default models will be used.
-AI_MODEL_OPENAI="gpt-4o"
-AI_MODEL_GEMINI="gemini-1.5-flash"
-AI_MODEL_GROQ="llama3-70b-8192"
-AI_MODEL_ANTHROPIC="claude-3-haiku-20240307"
-AI_MODEL_OLLAMA="llama3"
-```
+    # --- System Path Configuration (IMPORTANT!) ---
+    # MUST be absolute paths.
+    RESEARCH_PAPERS_DIR="/path/on/your/machine/research-papers"
+    RESEARCH_HUB_EXECUTABLE="/path/on/your/machine/rust-research-mcp"
+    ```
 
 #### 5. Set Up the Database (Supabase)
 
@@ -150,34 +178,35 @@ If you plan to use the Supabase integration, make sure your database table match
 
 ### ▶️ Usage
 
-Once configured, you can run the two main workflows.
+The project has two main execution workflows.
 
-#### Daily Trend Research
+#### 1. Daily Trend Research
 
-This is the main workflow. It will run the research on all enabled platforms, analyze the data, and generate reports.
+This is the primary workflow. It runs research on all enabled platforms using the keywords in `keywords/active.json`, analyzes the data, discovers new keywords, and generates reports.
 
 ```bash
 python ai_trend_researcher.py
 ```
+The script will log its progress to the console. When it finishes, you will find:
+- A JSON report in the `reports/` directory.
+- A new page in your specified Notion workspace (if configured).
+- A new record in your Supabase table (if configured).
 
-The script will print its progress to the console. Upon completion, you will find the JSON report in the `reports/` directory and, if configured, a new page in Notion and a new record in your Supabase table.
+#### 2. Deep Dive Research (`research_assistant`)
 
-#### Deep Dive Research
+This advanced script uses the custom `research_hub` server to perform in-depth academic research. It searches for papers, downloads PDFs, and generates bibliographies.
 
-This script uses the `research_hub` server to perform advanced paper searches, download them, analyze them, and generate bibliographies.
-
-1.  Ensure the `research_hub` executable is correctly configured in your `.env`.
-2.  (Optional) Add search terms to the `terminos.txt` file.
+1. Ensure the `RESEARCH_HUB_EXECUTABLE` path in your `.env` is correct.
+2. Add search terms to the `terminos.txt` file (one per line).
 
 ```bash
 python research_assistant.py
 ```
-
-The results of this execution (CSVs, JSONs, BibTeX files, and logs) will be saved in subdirectories within `salidas/` to keep each run organized.
+The results (CSVs, JSONs, BibTeX files, and logs) will be saved in a timestamped subdirectory within `salidas/` to keep each run organized.
 
 ### 🤝 Contributing
 
-Contributions are welcome. If you have ideas for improving the project, new platforms to integrate, or find any bugs, please open an issue or submit a pull request.
+Contributions are welcome! If you have ideas for improving the project, new platforms to integrate, or find any bugs, please open an issue or submit a pull request.
 
 ### 📄 License
 
@@ -191,21 +220,17 @@ This project is licensed under the MIT License. See the `LICENSE` file for more 
 <details>
 <summary><strong>Tabla de Contenidos</strong></summary>
 
-- [🚀 Características Principales](#-características-principales)
-- [🏛️ Arquitectura del Proyecto](#️-arquitectura-del-proyecto)
-- [🛠️ Instalación y Configuración](#️-instalación-y-configuración)
-  - [1. Prerrequisitos](#1-prerrequisitos)
-  - [2. Clonar el Repositorio](#2-clonar-el-repositorio)
-  - [3. Instalar Dependencias de Python](#3-instalar-dependencias-de-python)
-  - [4. Configurar las Variables de Entorno](#4-configurar-las-variables-de-entorno)
-  - [5. Configurar la Base de Datos (Supabase)](#5-configurar-la-base-de-datos-supabase)
-- [▶️ Uso](#️-uso)
-  - [Investigación Diaria de Tendencias](#investigación-diaria-de-tendencias)
-  - [Inmersión Profunda de Investigación](#inmersión-profunda-de-investigación)
-- [🤝 Contribuciones](#-contribuciones)
-- [📄 Licencia](#-licencia)
+- [🚀 Características Principales](#-características-principales-1)
+- [🏛️ Arquitectura del Sistema](#️-arquitectura-del-sistema)
+- [💻 Stack Tecnológico](#-stack-tecnológico)
+- [🛠️ Instalación y Configuración](#️-instalación-y-configuración-1)
+- [▶️ Uso](#️-uso-1)
+- [🤝 Contribuciones](#-contribuciones-1)
+- [📄 Licencia](#-licencia-1)
 
 </details>
+
+### AI Trend Research Engine
 
 Un sistema automatizado y modular para la investigación de tendencias en Inteligencia Artificial. Recopila y procesa datos de múltiples plataformas (GitHub, YouTube, ArXiv, etc.), utiliza modelos de lenguaje (LLMs) para extraer *insights*, descubrir nuevas palabras clave y genera informes completos en múltiples formatos (JSON, Notion, Supabase).
 
@@ -214,106 +239,140 @@ Un sistema automatizado y modular para la investigación de tendencias en Inteli
 ### 🚀 Características Principales
 
 -   **Investigación Multiplataforma**: Recopila datos de YouTube, GitHub, búsquedas web, ArXiv, HackerNews y un motor de investigación de *papers* personalizado.
--   **Procesamiento con IA**: Utiliza LLMs (OpenAI, Gemini, Groq, Anthropic, Ollama) para tareas avanzadas como:
-    -   Extracción inteligente de nuevas palabras clave.
-    -   Generación de recomendaciones dinámicas y contextuales.
-    -   Traducción de términos de búsqueda para consultas multilingües.
--   **Arquitectura Asíncrona**: Construido con `asyncio` para una alta concurrencia y eficiencia en operaciones de red y manejo de procesos.
--   **Generación de Informes**: Crea automáticamente informes detallados en:
-    -   **JSON**: Archivos locales para archivo y análisis.
-    -   **Notion**: Páginas estructuradas y fáciles de leer en tu *workspace*.
-    -   **Supabase**: Registros en una base de datos PostgreSQL para persistencia a largo plazo.
--   **Gestión de Keywords**: Mantiene un ciclo de vida para las palabras clave, con un catálogo maestro, una lista activa para investigar y un historial de ejecuciones.
--   **Altamente Configurable**: Toda la configuración (API keys, selección de modelos de IA, rutas de archivos) se gestiona a través de un archivo `.env` para facilitar la portabilidad y seguridad.
--   **Protocolo Estándar**: Utiliza el **Model Context Protocol (MCP)** para comunicarse con los servidores de cada plataforma, asegurando una interfaz estandarizada y desacoplada.
+-   **Soporte Multi-LLM**: Cambia fácilmente entre diferentes proveedores de LLM como OpenAI, Gemini, Groq, Anthropic y modelos locales con Ollama.
+-   **Análisis con IA**: Utiliza LLMs para tareas avanzadas como la extracción inteligente de palabras clave, la generación de recomendaciones dinámicas y la traducción de consultas multilingües.
+-   **Arquitectura Asíncrona**: Construido con `asyncio` para una alta concurrencia y eficiencia en el manejo de I/O de red y la gestión de múltiples servidores de datos.
+-   **Informes Automatizados**: Crea automáticamente informes detallados en **JSON** (para archivo local), **Notion** (para espacios de trabajo colaborativos) y **Supabase** (para persistencia de datos a largo plazo).
+-   **Ciclo de Vida Dinámico de Keywords**: Implementa un ciclo de vida completo para las palabras clave: descubrimiento, puntuación, investigación activa y seguimiento histórico, todo gestionado a través de simples archivos JSON.
+-   **Desacoplado y Estandarizado**: Utiliza el **Model Context Protocol (MCP)** para comunicarse con el servidor de cada plataforma, asegurando una interfaz estandarizada, modular y fácilmente extensible.
+-   **Altamente Configurable**: Toda la configuración (API keys, selección de modelos de IA, rutas de archivos) se gestiona a través de un único archivo `.env` para facilitar la portabilidad y seguridad.
 
-### 🏛️ Arquitectura del Proyecto
+### 🏛️ Arquitectura del Sistema
 
-El sistema está diseñado con una arquitectura modular y desacoplada para facilitar su mantenimiento y extensión.
+El sistema está diseñado con una arquitectura modular donde un orquestador central gestiona varios componentes especializados. La comunicación con las fuentes de datos externas se estandariza a través de servidores MCP.
 
--   `ai_trend_researcher.py`: El orquestador principal que ejecuta el flujo de investigación diario.
--   `config_manager.py`: Centraliza la carga y validación de toda la configuración desde el archivo `.env`.
--   `mcp_client_manager.py`: Gestiona el ciclo de vida (conexión, llamadas, cierre) de los clientes para los servidores MCP de cada plataforma.
--   `platform_handlers.py`: Contiene la lógica específica para interactuar con cada plataforma (ej. `YouTubeHandler`, `GitHubHandler`), procesar sus datos y estandarizarlos.
--   `data_processor.py`: Se encarga del análisis de datos, la extracción de keywords y la generación de recomendaciones utilizando tanto heurísticas como LLMs.
--   `ai_client_manager.py`: Actúa como una fábrica para interactuar de forma unificada con diferentes proveedores de modelos de lenguaje (OpenAI, Gemini, etc.).
--   `report_generator.py`: Genera los informes finales en todos los formatos soportados (JSON, Notion, Supabase).
--   `keyword_manager.py`: Administra la base de datos de palabras clave en archivos JSON.
--   `research_assistant.py`: Un script avanzado para realizar inmersiones profundas de investigación utilizando el servidor personalizado `research_hub`.
+```mermaid
+graph TD
+    subgraph "Motor Principal"
+        A[ai_trend_researcher.py] --> B{KeywordManager};
+        A --> C{MCPClientManager};
+        A --> D{DataProcessor};
+        A --> E{ReportManager};
+    end
+
+    subgraph "Integración IA"
+        F[AIClientManager] -- Gestiona --> G[OpenAI, Gemini, Groq, ...];
+        D -- Usa --> F;
+    end
+
+    subgraph "Fuentes de Datos (vía MCP)"
+        C -- Conecta a --> H[Servidor YouTube];
+        C -- Conecta a --> I[Servidor GitHub];
+        C -- Conecta a --> J[Servidor ArXiv];
+        C -- Conecta a --> K[Web/HackerNews...];
+        C -- Conecta a --> L[Servidor ResearchHub];
+    end
+
+    subgraph "Informes de Salida"
+        E -- Genera --> M[Archivos JSON];
+        E -- Genera --> N[Páginas en Notion];
+        E -- Genera --> O[Registros en Supabase];
+    end
+
+    B --> A;
+```
+
+-   **Orquestador (`ai_trend_researcher.py`)**: El script principal que coordina todo el flujo de investigación, desde la carga de keywords hasta la generación de informes finales.
+-   **Configuración (`config_manager.py`)**: Carga y valida todas las variables de entorno y configuraciones de los servidores.
+-   **Conectividad (`mcp_client_manager.py`)**: Gestiona el ciclo de vida (inicio, conexión, llamada, cierre) de todos los servidores MCP para las plataformas de datos.
+-   **Fábrica de IA (`ai_client_manager.py`)**: Proporciona una interfaz unificada para interactuar con diversos proveedores de LLM.
+-   **Lógica de Plataformas (`platform_handlers.py`)**: Contiene la lógica específica para consultar cada plataforma y estandarizar su respuesta.
+-   **Análisis (`data_processor.py`)**: Utiliza LLMs y heurísticas para extraer nuevas palabras clave, puntuarlas y generar recomendaciones accionables.
+-   **Informes (`report_generator.py`)**: Crea los informes finales en todos los formatos soportados.
+-   **Base de Datos de Keywords (`keyword_manager.py`)**: Administra el estado de las palabras clave a través de los ciclos de investigación.
+
+### 💻 Stack Tecnológico
+
+-   **Backend**: Python 3.9+
+-   **Concurrencia**: `asyncio`
+-   **Proveedores IA**: OpenAI, Google Gemini, Anthropic Claude, Groq, Ollama
+-   **Protocolo de Herramientas**: Model Context Protocol (MCP)
+-   **Dependencias**: `python-dotenv`, `aiofiles`, SDKs de proveedores (ej. `openai`, `google-generativeai`)
+-   **Prerrequisitos**: Node.js & npm (para ejecutar servidores MCP de la comunidad vía `npx`), Rust (opcional, para compilar el servidor `research_hub`)
 
 ### 🛠️ Instalación y Configuración
-
-Sigue estos pasos para poner en marcha el proyecto en tu entorno local.
 
 #### 1. Prerrequisitos
 
 -   **Python 3.9+**
 -   **Node.js y npm** (necesario para `npx`, que ejecuta los servidores MCP de la comunidad).
 -   **Git**
--   (Opcional) **Compilador de Rust**, si deseas compilar el ejecutable de `research_hub` desde el código fuente.
+-   (Opcional) **Compilador de Rust**, si deseas compilar el ejecutable de `research_hub` desde el código fuente. Si no, puedes usar un binario precompilado.
 
 #### 2. Clonar el Repositorio
 
 ```bash
-git clone https://github.com/tu_usuario/tu_repositorio.git
-cd tu_repositorio
+git clone https://github.com/tu-usuario/tu-repositorio.git
+cd tu-repositorio
 ```
 
 #### 3. Instalar Dependencias de Python
 
-Crea un entorno virtual (recomendado) e instala las bibliotecas necesarias.
+Se recomienda encarecidamente utilizar un entorno virtual.
 
 ```bash
 python -m venv venv
-source venv/bin/activate  # En Windows: venv\Scripts\activate
-pip install -r requirements.txt```
+# En macOS/Linux:
+source venv/bin/activate
+# En Windows:
+venv\Scripts\activate
+
+pip install -r requirements.txt
+```
 
 #### 4. Configurar las Variables de Entorno
 
-Este es el paso más importante. El proyecto se controla mediante un archivo `.env`.
+Este es el paso más crítico.
 
-1.  Copia el archivo de ejemplo:
+1.  Crea tu archivo de entorno a partir del ejemplo:
     ```bash
     cp .env.example .env
     ```
-2.  Edita el archivo `.env` con un editor de texto y rellena todas las claves de API y rutas necesarias.
+2.  Abre el archivo `.env` y rellena tus claves de API y rutas. Solo necesitas rellenar las claves para los servicios que vayas a utilizar.
 
-```env
-# .env.example
+    ```env
+    # .env
 
-# --- Claves de API (Obligatorias para las plataformas que uses) ---
-YOUTUBE_API_KEY=AIzaSy...
-GITHUB_PERSONAL_ACCESS_TOKEN=ghp_...
-NOTION_API_KEY=secret_...
-SUPABASE_ACCESS_TOKEN=eyJhbGciOi...
-SILICONFLOW_API_KEY= # Opcional, para el servidor de ArXiv
+    # --- Configuración del Proveedor de IA ---
+    # Elige uno: "openai", "gemini", "groq", "anthropic", "ollama"
+    AI_PROVIDER="openai"
 
-# --- Configuración de Notion (Obligatoria si se usa Notion) ---
-NOTION_PARENT_PAGE_ID=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+    # Rellena las claves de API para los proveedores que puedas usar.
+    OPENAI_API_KEY="sk-..."
+    GOOGLE_API_KEY="AIzaSy..."
+    GROQ_API_KEY="gsk_..."
+    ANTHROPIC_API_KEY="sk-ant-..."
+    # No se necesita clave para Ollama
 
-# --- Configuración de Rutas del Sistema (¡IMPORTANTE!) ---
-# Modifica estas rutas para que apunten a directorios en tu máquina.
-RESEARCH_PAPERS_DIR="/home/user/documentos/research-papers"
-RESEARCH_HUB_EXECUTABLE="/home/user/proyectos/rust-research-mcp/target/release/rust-research-mcp"
+    # --- (Opcional) Modelos Específicos de IA ---
+    AI_MODEL_OPENAI="gpt-4o"
+    AI_MODEL_GEMINI="gemini-1.5-flash"
+    # ... etc. para otros proveedores
 
-# --- Configuración del Proveedor de IA ---
-# Elige uno: "openai", "gemini", "groq", "anthropic", "ollama"
-AI_PROVIDER="openai"
+    # --- Claves de API para Fuentes de Datos ---
+    YOUTUBE_API_KEY=AIzaSy...
+    GITHUB_PERSONAL_ACCESS_TOKEN=ghp_...
 
-# Rellena la clave de API para el proveedor que hayas elegido.
-OPENAI_API_KEY="sk-..."
-GOOGLE_API_KEY="AIzaSy..."
-GROQ_API_KEY="gsk_..."
-ANTHROPIC_API_KEY="sk-ant-..."
+    # --- Claves de API para Salidas de Informes ---
+    NOTION_API_KEY=secret_...
+    NOTION_PARENT_PAGE_ID=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+    SUPABASE_ACCESS_TOKEN=eyJhbGciOi...
 
-# --- (Opcional) Modelos Específicos de IA ---
-# Si se dejan en blanco, se usarán los modelos por defecto.
-AI_MODEL_OPENAI="gpt-4o"
-AI_MODEL_GEMINI="gemini-1.5-flash"
-AI_MODEL_GROQ="llama3-70b-8192"
-AI_MODEL_ANTHROPIC="claude-3-haiku-20240307"
-AI_MODEL_OLLAMA="llama3"
-```
+    # --- Configuración de Rutas del Sistema (¡IMPORTANTE!) ---
+    # DEBEN ser rutas absolutas.
+    RESEARCH_PAPERS_DIR="/ruta/en/tu/maquina/research-papers"
+    RESEARCH_HUB_EXECUTABLE="/ruta/en/tu/maquina/rust-research-mcp"
+    ```
 
 #### 5. Configurar la Base de Datos (Supabase)
 
@@ -321,34 +380,35 @@ Si planeas usar la integración con Supabase, asegúrate de que tu tabla en la b
 
 ### ▶️ Uso
 
-Una vez configurado, puedes ejecutar los dos flujos de trabajo principales.
+El proyecto tiene dos flujos de ejecución principales.
 
-#### Investigación Diaria de Tendencias
+#### 1. Investigación Diaria de Tendencias
 
-Este es el flujo principal. Ejecutará la investigación en todas las plataformas habilitadas, analizará los datos y generará los informes.
+Este es el flujo de trabajo principal. Ejecuta la investigación en todas las plataformas habilitadas usando las palabras clave de `keywords/active.json`, analiza los datos, descubre nuevas keywords y genera informes.
 
 ```bash
 python ai_trend_researcher.py
 ```
+El script registrará su progreso en la consola. Cuando finalice, encontrarás:
+- Un informe JSON en el directorio `reports/`.
+- Una nueva página en tu espacio de trabajo de Notion (si está configurado).
+- Un nuevo registro en tu tabla de Supabase (si está configurado).
 
-El script imprimirá su progreso en la consola. Al finalizar, encontrarás el informe JSON en el directorio `reports/` y, si está configurado, una nueva página en Notion y un nuevo registro en tu tabla de Supabase.
+#### 2. Inmersión Profunda de Investigación (`research_assistant`)
 
-#### Inmersión Profunda de Investigación
+Este script avanzado utiliza el servidor personalizado `research_hub` para realizar investigaciones académicas en profundidad. Busca *papers*, descarga los PDF y genera bibliografías.
 
-Este script utiliza el servidor `research_hub` para realizar búsquedas avanzadas de *papers*, descargarlos, analizarlos y generar bibliografías.
-
-1.  Asegúrate de que el ejecutable `research_hub` esté correctamente configurado en tu `.env`.
-2.  (Opcional) Añade términos de búsqueda al archivo `terminos.txt`.
+1. Asegúrate de que la ruta `RESEARCH_HUB_EXECUTABLE` en tu `.env` sea correcta.
+2. Añade términos de búsqueda al archivo `terminos.txt` (uno por línea).
 
 ```bash
 python research_assistant.py
 ```
-
-Los resultados de esta ejecución (CSVs, JSONs, archivos BibTeX y logs) se guardarán en subdirectorios dentro de `salidas/` para mantener cada ejecución organizada.
+Los resultados (CSVs, JSONs, archivos BibTeX y logs) se guardarán en un subdirectorio con marca de tiempo dentro de `salidas/` para mantener cada ejecución organizada.
 
 ### 🤝 Contribuciones
 
-Las contribuciones son bienvenidas. Si tienes ideas para mejorar el proyecto, nuevas plataformas para integrar o encuentras algún error, por favor abre un *issue* o envía un *pull request*.
+¡Las contribuciones son bienvenidas! Si tienes ideas para mejorar el proyecto, nuevas plataformas para integrar o encuentras algún error, por favor abre un *issue* o envía un *pull request*.
 
 ### 📄 Licencia
 
@@ -362,130 +422,159 @@ Este proyecto está bajo la Licencia MIT. Consulta el archivo `LICENSE` para má
 <details>
 <summary><strong>Taula de Continguts</strong></summary>
 
-- [🚀 Característiques Principals](#-característiques-principals)
-- [🏛️ Arquitectura del Projecte](#️-arquitectura-del-projecte)
-- [🛠️ Instal·lació i Configuració](#️-installació-i-configuració)
-  - [1. Prerequisits](#1-prerequisits)
-  - [2. Clonar el Repositori](#2-clonar-el-repositori)
-  - [3. Instal·lar Dependències de Python](#3-installar-dependències-de-python)
-  - [4. Configurar les Variables d'Entorn](#4-configurar-les-variables-dentorn)
-  - [5. Configurar la Base de Dades (Supabase)](#5-configurar-la-base-de-dades-supabase)
-- [▶️ Ús](#️-ús)
-  - [Recerca Diària de Tendències](#recerca-diària-de-tendències)
-  - [Recerca d'Immersió Profunda](#recerca-dimmersió-profunda)
-- [🤝 Contribucions](#-contribucions)
-- [📄 Llicència](#-llicència)
+- [🚀 Característiques Principals](#-característiques-principals-2)
+- [🏛️ Arquitectura del Sistema](#️-arquitectura-del-sistema-1)
+- [💻 Stack Tecnològic](#-stack-tecnològic-1)
+- [🛠️ Instal·lació i Configuració](#️-installació-i-configuració-2)
+- [▶️ Ús](#️-ús-2)
+- [🤝 Contribucions](#-contribucions-2)
+- [📄 Llicència](#-llicència-2)
 
 </details>
 
+### AI Trend Research Engine
+
 Un sistema automatitzat i modular per a la investigació de tendències en Intel·ligència Artificial. Recopila i processa dades de múltiples plataformes (GitHub, YouTube, ArXiv, etc.), utilitza models de llenguatge (LLMs) per extreure *insights*, descobrir noves paraules clau i genera informes complets en múltiples formats (JSON, Notion, Supabase).
 
-**Nota:** Aquest projecte ha estat desenvolupat modificant el projecte [EmpowerHerDev/ai-trend-research-system](https://github.com/EmpowerHerDev/ai-trend-research-system) i integrant el servidor de recerca personalitzat de [Ladvien/research_hub_mcp](https://github.com/Ladvien/research_hub_mcp). El resultat és un sistema flexible i modular que ara és compatible amb múltiples proveïdors de models de llenguatge grans (LLM), incloent-hi **OpenAI (GPT), Google (Gemini), Anthropic (Claude), Groq i Ollama**. Aquest treball també forma part d'un procés d'aprenentatge personal en el camp del desenvolupament d'agents d'intel·ligència artificial.
+**Nota:** Aquest projecte ha estat desenvolupat modificant el projecte [EmpowerHerDev/ai-trend-research-system](https://github.com/EmpowerHerDev/ai-trend-research-system) i integrant el servidor de recerca personalitzat de [Ladvien/research_hub_mcp](https://github.com/Ladvien/research_hub_mcp). El resultat és un sistema flexible i modular que ara és compatible amb múltiples proveïdors de models de llenguatge grans (LLM), incloent-hi **OpenAI (GPT), Google (Gemini), Anthropic (Claude), Groq i Ollama**. Aquest treball también forma part d'un procés d'aprenentatge personal en el camp del desenvolupament d'agents d'intel·ligència artificial.
 
 ### 🚀 Característiques Principals
 
 -   **Recerca Multiplataforma**: Recopila dades de YouTube, GitHub, cerques web, ArXiv, HackerNews i un motor de recerca de *papers* personalitzat.
--   **Processament amb IA**: Utilitza LLMs (OpenAI, Gemini, Groq, Anthropic, Ollama) per a tasques avançades com:
-    -   Extracció intel·ligent de noves paraules clau.
-    -   Generació de recomanacions dinàmiques i contextuals.
-    -   Traducció de termes de cerca per a consultes multilingües.
--   **Arquitectura Asíncrona**: Construït amb `asyncio` per a una alta concurrència i eficiència en operacions de xarxa i gestió de processos.
--   **Generació d'Informes**: Crea automàticament informes detallats en:
-    -   **JSON**: Fitxers locals per a arxiu i anàlisi.
-    -   **Notion**: Pàgines estructurades i fàcils de llegir al teu *workspace*.
-    -   **Supabase**: Registres en una base de dades PostgreSQL per a persistència a llarg termini.
--   **Gestió de Keywords**: Manté un cicle de vida per a les paraules clau, amb un catàleg mestre, una llista activa per investigar i un historial d'execucions.
--   **Altament Configurable**: Tota la configuració (claus d'API, selecció de models d'IA, rutes de fitxers) es gestiona mitjançant un fitxer `.env` per facilitar la portabilitat i seguretat.
--   **Protocol Estàndard**: Utilitza el **Model Context Protocol (MCP)** per comunicar-se amb els servidors de cada plataforma, assegurant una interfície estandarditzada i desacoblada.
+-   **Suport Multi-LLM**: Canvia fàcilment entre diferents proveïdors de LLM com OpenAI, Gemini, Groq, Anthropic i models locals amb Ollama.
+-   **Anàlisi amb IA**: Utilitza LLMs per a tasques avançades com l'extracció intel·ligent de paraules clau, la generació de recomanacions dinàmiques i la traducció de consultes multilingües.
+-   **Arquitectura Asíncrona**: Construït amb `asyncio` per a una alta concurrència i eficiència en la gestió d'I/O de xarxa i la gestió de múltiples servidors de dades.
+-   **Informes Automatitzats**: Crea automàticament informes detallats en **JSON** (per a arxiu local), **Notion** (per a espais de treball col·laboratius) i **Supabase** (per a persistència de dades a llarg termini).
+-   **Cicle de Vida Dinàmic de Keywords**: Implementa un cicle de vida complet per a les paraules clau: descobriment, puntuació, recerca activa i seguiment històric, tot gestionat a través de simples fitxers JSON.
+-   **Desacoblat i Estandarditzat**: Utilitza el **Model Context Protocol (MCP)** per comunicar-se amb el servidor de cada plataforma, assegurant una interfície estandarditzada, modular i fàcilment extensible.
+-   **Altament Configurable**: Tota la configuració (claus d'API, selecció de models d'IA, rutes de fitxers) es gestiona a través d'un únic fitxer `.env` per facilitar la portabilitat i seguretat.
 
-### 🏛️ Arquitectura del Projecte
+### 🏛️ Arquitectura del Sistema
 
-El sistema està dissenyat amb una arquitectura modular i desacoblada per facilitar el seu manteniment i extensió.
+El sistema està dissenyat amb una arquitectura modular on un orquestrador central gestiona diversos components especialitzats. La comunicació amb les fonts de dades externes s'estandarditza a través de servidors MCP.
 
--   `ai_trend_researcher.py`: L'orquestrador principal que executa el flux de recerca diari.
--   `config_manager.py`: Centralitza la càrrega i validació de tota la configuració des del fitxer `.env`.
--   `mcp_client_manager.py`: Gestiona el cicle de vida (connexió, trucades, tancament) dels clients per als servidors MCP de cada plataforma.
--   `platform_handlers.py`: Conté la lògica específica per interactuar amb cada plataforma (ex. `YouTubeHandler`, `GitHubHandler`), processar les seves dades i estandarditzar-les.
--   `data_processor.py`: S'encarrega de l'anàlisi de dades, l'extracció de paraules clau i la generació de recomanacions utilitzant tant heurístiques com LLMs.
--   `ai_client_manager.py`: Actua com una fàbrica per interactuar de manera unificada amb diferents proveïdors de models de llenguatge (OpenAI, Gemini, etc.).
--   `report_generator.py`: Genera els informes finals en tots els formats suportats (JSON, Notion, Supabase).
--   `keyword_manager.py`: Administra la base de dades de paraules clau en fitxers JSON.
--   `research_assistant.py`: Un script avançat per realitzar immersions profundes de recerca utilitzant el servidor personalitzat `research_hub`.
+```mermaid
+graph TD
+    subgraph "Motor Principal"
+        A[ai_trend_researcher.py] --> B{KeywordManager};
+        A --> C{MCPClientManager};
+        A --> D{DataProcessor};
+        A --> E{ReportManager};
+    end
+
+    subgraph "Integració IA"
+        F[AIClientManager] -- Gestiona --> G[OpenAI, Gemini, Groq, ...];
+        D -- Utilitza --> F;
+    end
+
+    subgraph "Fonts de Dades (via MCP)"
+        C -- Connecta a --> H[Servidor YouTube];
+        C -- Connecta a --> I[Servidor GitHub];
+        C -- Connecta a --> J[Servidor ArXiv];
+        C -- Connecta a --> K[Web/HackerNews...];
+        C -- Connecta a --> L[Servidor ResearchHub];
+    end
+
+    subgraph "Informes de Sortida"
+        E -- Genera --> M[Fitxers JSON];
+        E -- Genera --> N[Pàgines a Notion];
+        E -- Genera --> O[Registres a Supabase];
+    end
+
+    B --> A;
+```
+
+-   **Orquestrador (`ai_trend_researcher.py`)**: L'script principal que coordina tot el flux de recerca, des de la càrrega de paraules clau fins a la generació d'informes finals.
+-   **Configuració (`config_manager.py`)**: Carrega i valida totes les variables d'entorn i configuracions dels servidors.
+-   **Connectivitat (`mcp_client_manager.py`)**: Gestiona el cicle de vida (inici, connexió, trucada, tancament) de tots els servidors MCP per a les plataformes de dades.
+-   **Fàbrica d'IA (`ai_client_manager.py`)**: Proporciona una interfície unificada per interactuar amb diversos proveïdors de LLM.
+-   **Lògica de Plataformes (`platform_handlers.py`)**: Conté la lògica específica per consultar cada plataforma i estandarditzar la seva resposta.
+-   **Anàlisi (`data_processor.py`)**: Utilitza LLMs i heurístiques per extreure noves paraules clau, puntuar-les i generar recomanacions accionables.
+-   **Informes (`report_generator.py`)**: Crea els informes finals en tots els formats suportats.
+-   **Base de Dades de Keywords (`keyword_manager.py`)**: Administra l'estat de les paraules clau a través dels cicles de recerca.
+
+### 💻 Stack Tecnològic
+
+-   **Backend**: Python 3.9+
+-   **Concurrència**: `asyncio`
+-   **Proveïdors IA**: OpenAI, Google Gemini, Anthropic Claude, Groq, Ollama
+-   **Protocol d'Eines**: Model Context Protocol (MCP)
+-   **Dependències**: `python-dotenv`, `aiofiles`, SDKs de proveïdors (ex. `openai`, `google-generativeai`)
+-   **Prerequisits**: Node.js & npm (per executar servidors MCP de la comunitat via `npx`), Rust (opcional, per compilar el servidor `research_hub`)
 
 ### 🛠️ Instal·lació i Configuració
-
-Segueix aquests passos per posar en marxa el projecte al teu entorn local.
 
 #### 1. Prerequisits
 
 -   **Python 3.9+**
 -   **Node.js i npm** (necessari per a `npx`, que executa els servidors MCP de la comunitat).
 -   **Git**
--   (Opcional) **Compilador de Rust**, si vols compilar l'executable de `research_hub` des del codi font.
+-   (Opcional) **Compilador de Rust**, si vols compilar l'executable de `research_hub` des del codi font. Si no, pots fer servir un binari precompilat.
 
 #### 2. Clonar el Repositori
 
 ```bash
-git clone https://github.com/el_teu_usuari/el_teu_repositori.git
-cd el_teu_repositori
+git clone https://github.com/el-teu-usuari/el-teu-repositori.git
+cd el-teu-repositori
 ```
 
 #### 3. Instal·lar Dependències de Python
 
-Crea un entorn virtual (recomanat) i instal·la les llibreries necessàries.
+És molt recomanable utilitzar un entorn virtual.
 
 ```bash
 python -m venv venv
-source venv/bin/activate  # A Windows: venv\Scripts\activate
+# A macOS/Linux:
+source venv/bin/activate
+# A Windows:
+venv\Scripts\activate
+
 pip install -r requirements.txt
 ```
 
 #### 4. Configurar les Variables d'Entorn
 
-Aquest és el pas més important. El projecte es controla mitjançant un fitxer `.env`.
+Aquest és el pas més crític.
 
-1.  Copia el fitxer d'exemple:
+1.  Crea el teu fitxer d'entorn a partir de l'exemple:
     ```bash
     cp .env.example .env
     ```
-2.  Edita el fitxer `.env` amb un editor de text i omple totes les claus d'API i rutes necessàries.
+2.  Obre el fitxer `.env` i omple les teves claus d'API i rutes. Només cal omplir les claus per als serveis que vulguis utilitzar.
 
-```env
-# .env.example
+    ```env
+    # .env
 
-# --- Claus d'API (Obligatòries per a les plataformes que facis servir) ---
-YOUTUBE_API_KEY=AIzaSy...
-GITHUB_PERSONAL_ACCESS_TOKEN=ghp_...
-NOTION_API_KEY=secret_...
-SUPABASE_ACCESS_TOKEN=eyJhbGciOi...
-SILICONFLOW_API_KEY= # Opcional, per al servidor d'ArXiv
+    # --- Configuració del Proveïdor d'IA ---
+    # Tria'n un: "openai", "gemini", "groq", "anthropic", "ollama"
+    AI_PROVIDER="openai"
 
-# --- Configuració de Notion (Obligatòria si s'usa Notion) ---
-NOTION_PARENT_PAGE_ID=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+    # Omple les claus d'API per als proveïdors que puguis utilitzar.
+    OPENAI_API_KEY="sk-..."
+    GOOGLE_API_KEY="AIzaSy..."
+    GROQ_API_KEY="gsk_..."
+    ANTHROPIC_API_KEY="sk-ant-..."
+    # No cal clau per a Ollama
 
-# --- Configuració de Rutes del Sistema (IMPORTANT!) ---
-# Modifica aquestes rutes perquè apuntin a directoris a la teva màquina.
-RESEARCH_PAPERS_DIR="/home/user/documents/research-papers"
-RESEARCH_HUB_EXECUTABLE="/home/user/projectes/rust-research-mcp/target/release/rust-research-mcp"
+    # --- (Opcional) Models Específics d'IA ---
+    AI_MODEL_OPENAI="gpt-4o"
+    AI_MODEL_GEMINI="gemini-1.5-flash"
+    # ... etc. per a altres proveïdors
 
-# --- Configuració del Proveïdor d'IA ---
-# Tria'n un: "openai", "gemini", "groq", "anthropic", "ollama"
-AI_PROVIDER="openai"
+    # --- Claus d'API per a Fonts de Dades ---
+    YOUTUBE_API_KEY=AIzaSy...
+    GITHUB_PERSONAL_ACCESS_TOKEN=ghp_...
 
-# Omple la clau d'API per al proveïdor que hagis triat.
-OPENAI_API_KEY="sk-..."
-GOOGLE_API_KEY="AIzaSy..."
-GROQ_API_KEY="gsk_..."
-ANTHROPIC_API_KEY="sk-ant-..."
+    # --- Claus d'API per a Sortides d'Informes ---
+    NOTION_API_KEY=secret_...
+    NOTION_PARENT_PAGE_ID=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+    SUPABASE_ACCESS_TOKEN=eyJhbGciOi...
 
-# --- (Opcional) Models Específics d'IA ---
-# Si es deixen en blanc, s'utilitzaran els models per defecte.
-AI_MODEL_OPENAI="gpt-4o"
-AI_MODEL_GEMINI="gemini-1.5-flash"
-AI_MODEL_GROQ="llama3-70b-8192"
-AI_MODEL_ANTHROPIC="claude-3-haiku-20240307"
-AI_MODEL_OLLAMA="llama3"
-```
+    # --- Configuració de Rutes del Sistema (IMPORTANT!) ---
+    # HAN de ser rutes absolutes.
+    RESEARCH_PAPERS_DIR="/ruta/a/la/teva/maquina/research-papers"
+    RESEARCH_HUB_EXECUTABLE="/ruta/a/la/teva/maquina/rust-research-mcp"
+    ```
 
 #### 5. Configurar la Base de Dades (Supabase)
 
@@ -493,33 +582,35 @@ Si planeges fer servir la integració amb Supabase, assegura't que la teva taula
 
 ### ▶️ Ús
 
-Un cop configurat, pots executar els dos fluxos de treball principals.
+El projecte té dos fluxos d'execució principals.
 
-#### Recerca Diària de Tendències
+#### 1. Recerca Diària de Tendències
 
-Aquest és el flux principal. Executarà la recerca a totes les plataformes habilitades, analitzarà les dades i generarà els informes.
+Aquest és el flux de treball principal. Executa la recerca a totes les plataformes habilitades fent servir les paraules clau de `keywords/active.json`, analitza les dades, descobreix noves keywords i genera informes.
 
 ```bash
 python ai_trend_researcher.py
 ```
+L'script registrarà el seu progrés a la consola. Quan acabi, trobaràs:
+- Un informe JSON al directori `reports/`.
+- Una nova pàgina al teu espai de treball de Notion (si està configurat).
+- Un nou registre a la teva taula de Supabase (si està configurat).
 
-L'script imprimirà el seu progrés a la consola. En finalitzar, trobaràs l'informe JSON al directori `reports/` i, si està configurat, una nova pàgina a Notion i un nou registre a la teva taula de Supabase.
+#### 2. Immersió Profunda de Recerca (`research_assistant`)
 
-#### Recerca d'Immersió Profunda
+Aquest script avançat utilitza el servidor personalitzat `research_hub` per a realitzar recerques acadèmiques en profunditat. Cerca *papers*, descarrega els PDF i genera bibliografies.
 
-Aquest script utilitza el servidor `research_hub` per realitzar cerques avançades de *papers*, descarregar-los, analitzar-los i generar bibliografies.
-
-1.  Assegura't que l'executable `research_hub` estigui correctament configurat al teu `.env`.
-2.  (Opcional) Afegeix termes de cerca al fitxer `terminos.txt`.
+1. Assegura't que la ruta `RESEARCH_HUB_EXECUTABLE` al teu `.env` sigui correcta.
+2. Afegeix termes de cerca al fitxer `terminos.txt` (un per línia).
 
 ```bash
-python research_assistant.py```
-
-Els resultats d'aquesta execució (CSVs, JSONs, fitxers BibTeX i logs) es desaran en subdirectoris dins de `salidas/` per mantenir cada execució organitzada.
+python research_assistant.py
+```
+Els resultats (CSVs, JSONs, fitxers BibTeX i logs) es desaran en un subdirectori amb marca de temps dins de `salidas/` per mantenir cada execució organitzada.
 
 ### 🤝 Contribucions
 
-Les contribucions són benvingudes. Si tens idees per millorar el projecte, noves plataformes per integrar o trobes algun error, si us plau obre un *issue* o envia un *pull request*.
+Les contribucions són benvingudes! Si tens idees per millorar el projecte, noves plataformes per integrar o trobes algun error, si us plau obre un *issue* o envia un *pull request*.
 
 ### 📄 Llicència
 
