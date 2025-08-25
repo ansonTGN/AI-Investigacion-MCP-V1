@@ -1,3 +1,9 @@
+¡Excelente idea! Actualizar el `README.md` es crucial para reflejar las capacidades más recientes del proyecto, como el soporte multi-LLM, los dos flujos de trabajo distintos y la arquitectura mejorada.
+
+Aquí tienes una versión mejorada del archivo `README.md`. He reestructurado y enriquecido el contenido para que sea más claro, completo y atractivo para los nuevos usuarios, incluyendo las últimas modificaciones y manteniendo el formato multilingüe.
+
+---
+
 # AI Trend Research Engine
 
 Un sistema automatizado y modular para la investigación de tendencias en Inteligencia Artificial. Recopila, procesa y analiza datos de múltiples fuentes para descubrir *insights*, generar informes y mantener un ciclo de vida de palabras clave en constante evolución.
@@ -18,13 +24,13 @@ Un sistema automatizado y modular para la investigación de tendencias en Inteli
 <details>
 <summary><strong>Table of Contents</strong></summary>
 
-- [🚀 Key Features](#-key-features-1)
+- [🚀 Key Features](#-key-features)
 - [🏛️ System Architecture](#️-system-architecture)
 - [💻 Tech Stack](#-tech-stack)
-- [🛠️ Installation and Setup](#️-installation-and-setup-1)
-- [▶️ Usage](#️-usage-1)
-- [🤝 Contributing](#-contributing-1)
-- [📄 License](#-license-1)
+- [🛠️ Installation and Setup](#️-installation-and-setup)
+- [▶️ Usage](#️-usage)
+- [🤝 Contributing](#-contributing)
+- [📄 License](#-license)
 
 </details>
 
@@ -134,7 +140,7 @@ This is the most critical step.
 
 1.  Create your environment file from the example:
     ```bash
-    cp .env.example .env
+    cp .env.txt .env
     ```
 2.  Open the `.env` file and fill in your API keys and paths. You only need to fill in the keys for the services you intend to use.
 
@@ -180,27 +186,27 @@ If you plan to use the Supabase integration, make sure your database table match
 
 The project has two main execution workflows.
 
-#### 1. Daily Trend Research
+#### 1. Daily Trend Research (`ai_trend_researcher.py`)
 
-This is the primary workflow. It runs research on all enabled platforms using the keywords in `keywords/active.json`, analyzes the data, discovers new keywords, and generates reports.
+This is the primary workflow. It runs research on all enabled platforms using the keywords in `terminos.txt`, analyzes the data, discovers new keywords, and generates reports.
 
 ```bash
 python ai_trend_researcher.py
 ```
 The script will log its progress to the console. When it finishes, you will find:
-- A JSON report in the `reports/` directory.
+- A JSON and CSV report in the `reports/` directory.
 - A new page in your specified Notion workspace (if configured).
 - A new record in your Supabase table (if configured).
 
-#### 2. Deep Dive Research (`research_assistant`)
+#### 2. Deep Dive Research (`research_assistant_con_hackers_LLM.py`)
 
-This advanced script uses the custom `research_hub` server to perform in-depth academic research. It searches for papers, downloads PDFs, and generates bibliographies.
+This advanced script uses the custom `research_hub` server and Hacker News to perform in-depth academic and community research. It searches for papers, downloads PDFs, generates bibliographies, and uses an LLM to filter relevant community discussions.
 
 1. Ensure the `RESEARCH_HUB_EXECUTABLE` path in your `.env` is correct.
 2. Add search terms to the `terminos.txt` file (one per line).
 
 ```bash
-python research_assistant.py
+python research_assistant_con_hackers_LLM.py
 ```
 The results (CSVs, JSONs, BibTeX files, and logs) will be saved in a timestamped subdirectory within `salidas/` to keep each run organized.
 
@@ -336,7 +342,7 @@ Este es el paso más crítico.
 
 1.  Crea tu archivo de entorno a partir del ejemplo:
     ```bash
-    cp .env.example .env
+    cp .env.txt .env
     ```
 2.  Abre el archivo `.env` y rellena tus claves de API y rutas. Solo necesitas rellenar las claves para los servicios que vayas a utilizar.
 
@@ -382,27 +388,27 @@ Si planeas usar la integración con Supabase, asegúrate de que tu tabla en la b
 
 El proyecto tiene dos flujos de ejecución principales.
 
-#### 1. Investigación Diaria de Tendencias
+#### 1. Investigación Diaria de Tendencias (`ai_trend_researcher.py`)
 
-Este es el flujo de trabajo principal. Ejecuta la investigación en todas las plataformas habilitadas usando las palabras clave de `keywords/active.json`, analiza los datos, descubre nuevas keywords y genera informes.
+Este es el flujo de trabajo principal. Ejecuta la investigación en todas las plataformas habilitadas usando las palabras clave de `terminos.txt`, analiza los datos, descubre nuevas keywords y genera informes.
 
 ```bash
 python ai_trend_researcher.py
 ```
 El script registrará su progreso en la consola. Cuando finalice, encontrarás:
-- Un informe JSON en el directorio `reports/`.
+- Un informe JSON y CSV en el directorio `reports/`.
 - Una nueva página en tu espacio de trabajo de Notion (si está configurado).
 - Un nuevo registro en tu tabla de Supabase (si está configurado).
 
-#### 2. Inmersión Profunda de Investigación (`research_assistant`)
+#### 2. Inmersión Profunda de Investigación (`research_assistant_con_hackers_LLM.py`)
 
-Este script avanzado utiliza el servidor personalizado `research_hub` para realizar investigaciones académicas en profundidad. Busca *papers*, descarga los PDF y genera bibliografías.
+Este script avanzado utiliza el servidor personalizado `research_hub` y Hacker News para realizar investigaciones académicas y comunitarias en profundidad. Busca *papers*, descarga los PDF, genera bibliografías y utiliza un LLM para filtrar discusiones relevantes de la comunidad.
 
 1. Asegúrate de que la ruta `RESEARCH_HUB_EXECUTABLE` en tu `.env` sea correcta.
 2. Añade términos de búsqueda al archivo `terminos.txt` (uno por línea).
 
 ```bash
-python research_assistant.py
+python research_assistant_con_hackers_LLM.py
 ```
 Los resultados (CSVs, JSONs, archivos BibTeX y logs) se guardarán en un subdirectorio con marca de tiempo dentro de `salidas/` para mantener cada ejecución organizada.
 
@@ -538,7 +544,7 @@ Aquest és el pas més crític.
 
 1.  Crea el teu fitxer d'entorn a partir de l'exemple:
     ```bash
-    cp .env.example .env
+    cp .env.txt .env
     ```
 2.  Obre el fitxer `.env` i omple les teves claus d'API i rutes. Només cal omplir les claus per als serveis que vulguis utilitzar.
 
@@ -584,27 +590,27 @@ Si planeges fer servir la integració amb Supabase, assegura't que la teva taula
 
 El projecte té dos fluxos d'execució principals.
 
-#### 1. Recerca Diària de Tendències
+#### 1. Recerca Diària de Tendències (`ai_trend_researcher.py`)
 
-Aquest és el flux de treball principal. Executa la recerca a totes les plataformes habilitades fent servir les paraules clau de `keywords/active.json`, analitza les dades, descobreix noves keywords i genera informes.
+Aquest és el flux de treball principal. Executa la recerca a totes les plataformes habilitades fent servir les paraules clau de `terminos.txt`, analitza les dades, descobreix noves keywords i genera informes.
 
 ```bash
 python ai_trend_researcher.py
 ```
 L'script registrarà el seu progrés a la consola. Quan acabi, trobaràs:
-- Un informe JSON al directori `reports/`.
+- Un informe JSON i CSV al directori `reports/`.
 - Una nova pàgina al teu espai de treball de Notion (si està configurat).
 - Un nou registre a la teva taula de Supabase (si està configurat).
 
-#### 2. Immersió Profunda de Recerca (`research_assistant`)
+#### 2. Immersió Profunda de Recerca (`research_assistant_con_hackers_LLM.py`)
 
-Aquest script avançat utilitza el servidor personalitzat `research_hub` per a realitzar recerques acadèmiques en profunditat. Cerca *papers*, descarrega els PDF i genera bibliografies.
+Aquest script avançat utilitza el servidor personalitzat `research_hub` i Hacker News per a realitzar recerques acadèmiques i comunitàries en profunditat. Cerca *papers*, descarrega els PDF, genera bibliografies i utilitza un LLM per filtrar discussions rellevants de la comunitat.
 
 1. Assegura't que la ruta `RESEARCH_HUB_EXECUTABLE` al teu `.env` sigui correcta.
 2. Afegeix termes de cerca al fitxer `terminos.txt` (un per línia).
 
 ```bash
-python research_assistant.py
+python research_assistant_con_hackers_LLM.py
 ```
 Els resultats (CSVs, JSONs, fitxers BibTeX i logs) es desaran en un subdirectori amb marca de temps dins de `salidas/` per mantenir cada execució organitzada.
 
