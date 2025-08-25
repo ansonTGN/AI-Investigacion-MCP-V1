@@ -1,9 +1,3 @@
-¡Excelente idea! Actualizar el `README.md` es crucial para reflejar las capacidades más recientes del proyecto, como el soporte multi-LLM, los dos flujos de trabajo distintos y la arquitectura mejorada.
-
-Aquí tienes una versión mejorada del archivo `README.md`. He reestructurado y enriquecido el contenido para que sea más claro, completo y atractivo para los nuevos usuarios, incluyendo las últimas modificaciones y manteniendo el formato multilingüe.
-
----
-
 # AI Trend Research Engine
 
 Un sistema automatizado y modular para la investigación de tendencias en Inteligencia Artificial. Recopila, procesa y analiza datos de múltiples fuentes para descubrir *insights*, generar informes y mantener un ciclo de vida de palabras clave en constante evolución.
