@@ -1,0 +1,3654 @@
+Directory Structure:
+
+└── ./
+    ├── .env.txt
+    ├── ai_client_manager.py
+    ├── ai_trend_researcher.py
+    ├── config_manager.py
+    ├── data_processor.py
+    ├── keyword_manager.py
+    ├── mcp_client_manager.py
+    ├── platform_handlers.py
+    ├── README.md
+    ├── report_generator.py
+    ├── requirement.txt
+    ├── requirements.txt
+    ├── research_assistant_con_hackers_LLM.py
+    └── research_assistant.py
+
+
+
+---
+File: /.env.txt
+---
+
+# --- Claves de API para los servicios de datos externos ---
+# Cada una de estas claves es necesaria para que el script pueda autenticarse y solicitar datos de estas plataformas.
+
+# Clave de API para acceder a los datos de YouTube (búsquedas, detalles de videos, etc.).
+YOUTUBE_API_KEY=your_youtube_api_key_here
+
+# Token de Acceso Personal de GitHub para realizar búsquedas en repositorios y código.
+GITHUB_PERSONAL_ACCESS_TOKEN=your_github_api_key_here
+
+# Clave de API para interactuar con Notion (crear y actualizar páginas).
+NOTION_API_KEY=your_notion_api_key_here
+
+# Clave de API para SiliconFlow, que podría ser usada por el servidor de ArXiv para procesar PDFs.
+SILICONFLOW_API_KEY=your_siliconflow_api_key_here
+
+# Token de Acceso para Supabase, para guardar los resultados de la investigación en la base de datos.
+SUPABASE_ACCESS_TOKEN=your_superbase_api_key_here
+
+
+# --- Configuración Específica de Notion ---
+
+# El ID de la página principal en Notion bajo la cual se crearán todas las páginas de informes nuevas.
+NOTION_PARENT_PAGE_ID='your_notion_parent_page_id'
+
+
+# --- Configuración de Rutas del Sistema ---
+# Define rutas importantes para que la aplicación sea portable entre diferentes sistemas.
+
+# Ruta al directorio donde el servidor 'research_hub' descargará los papers.
+RESEARCH_PAPERS_DIR="/path/to/your/research-papers"
+
+# Ruta completa al binario ejecutable del servidor 'research_hub'.
+RESEARCH_HUB_EXECUTABLE="/path/to/your/rust-research-mcp"
+
+
+# --- Configuración del Proveedor de IA ---
+
+# Define qué servicio de IA (LLM) se usará para tareas como la extracción de palabras clave o traducciones.
+# Opciones válidas: "anthropic", "gemini", "groq", "ollama", "openai".
+AI_PROVIDER="openai" 
+
+# Almacena las claves de API para cada uno de los proveedores de IA soportados.
+# El script cargará la clave correspondiente al proveedor seleccionado en AI_PROVIDER.
+ANTHROPIC_API_KEY="tu_clave_de_anthropic"
+GOOGLE_API_KEY="tu_clave_de_gemini"
+GROQ_API_KEY="tu_clave_de_groq"
+OPENAI_API_KEY="tu_clave_de_openai"
+
+# --- Configuración Opcional de Modelos de IA ---
+# Permite especificar qué modelo exacto usar para cada proveedor. Si no se define, se usará un modelo por defecto.
+
+# Modelo específico para Google Gemini (ej. gemini-1.5-flash).
+AI_MODEL_GEMINI="gemini-1.5-flash"
+# Modelo específico para Groq (ej. llama3-70b-8192).
+AI_MODEL_GROQ="llama3-70b-8192"
+# Modelo para Ollama, que debe corresponder a un modelo que tengas instalado localmente (ej. llama3).
+AI_MODEL_OLLAMA="llama3"
+# Modelo específico para Anthropic Claude (ej. claude-3-haiku).
+AI_MODEL_ANTHROPIC="claude-3-haiku-20240307"
+# Modelo específico para OpenAI (ej. gpt-4o).
+AI_MODEL_OPENAI="gpt-4o"
+
+
+
+---
+File: /ai_client_manager.py
+---
+
+# ai_client_manager.py
+
+import asyncio
+# Importa las bibliotecas cliente de cada proveedor de IA soportado.
+import google.generativeai as genai  # Para Google Gemini
+from anthropic import Anthropic       # Para Anthropic Claude
+from groq import Groq                 # Para Groq
+import ollama                         # Para Ollama (modelos locales)
+from openai import OpenAI             # Para OpenAI
+from typing import Callable, Any
+
+class AIClientManager:
+    """
+    Gestiona la inicialización e interacción con diferentes clientes de IA.
+    Actúa como una "fábrica" que crea el cliente correcto según la configuración
+    y proporciona un método unificado 'chat_completion' para interactuar con él de forma no bloqueante.
+    """
+    def __init__(self, provider: str, api_key: str = None, model: str = None):
+        """
+        Constructor. Inicializa el cliente de IA basado en el proveedor especificado.
+        :param provider: El nombre del proveedor (ej. "openai", "gemini").
+        :param api_key: La clave de API para el proveedor.
+        :param model: El nombre del modelo específico a usar (opcional).
+        """
+        self.provider = provider.lower()
+        self.model = model
+        self.client: Any = None
+        print(f"Initializing AI client for provider: {self.provider}")
+
+        # Lógica condicional para inicializar el cliente correcto.
+        if self.provider == 'gemini':
+            if not api_key: raise ValueError("Google API Key is required for Gemini provider.")
+            genai.configure(api_key=api_key)
+            self.client = genai.GenerativeModel(self.model or 'gemini-pro')
+        elif self.provider == 'groq':
+            if not api_key: raise ValueError("Groq API Key is required for Groq provider.")
+            self.client = Groq(api_key=api_key)
+        elif self.provider == 'ollama':
+            # Para Ollama, el cliente es el propio módulo de la biblioteca.
+            self.client = ollama
+        elif self.provider == 'anthropic':
+            if not api_key: raise ValueError("Anthropic API Key is required for Anthropic provider.")
+            self.client = Anthropic(api_key=api_key)
+        elif self.provider == 'openai':
+            if not api_key: raise ValueError("OpenAI API Key is required for OpenAI provider.")
+            self.client = OpenAI(api_key=api_key)
+        else:
+            raise ValueError(f"Unsupported AI provider: {self.provider}")
+
+    async def chat_completion(self, prompt: str, max_tokens: int = 1024) -> str:
+        """
+        Envía un prompt al modelo de IA y devuelve la respuesta de texto.
+        Este método abstrae las diferencias en las llamadas a la API y las ejecuta en un
+        hilo separado para no bloquear el bucle de eventos de asyncio.
+        """
+        try:
+            # Selecciona la función de llamada a la API correcta basada en el proveedor.
+            api_call_function = self._get_api_call_function(prompt, max_tokens)
+            
+            # Ejecuta la llamada síncrona de la biblioteca en un hilo separado.
+            # Esto es crucial para no bloquear la aplicación asíncrona.
+            loop = asyncio.get_running_loop()
+            response_text = await loop.run_in_executor(
+                None,  # Usa el ejecutor de hilos por defecto.
+                api_call_function
+            )
+            return response_text
+
+        except Exception as e:
+            print(f"Error calling {self.provider} API: {e}")
+            return ""
+
+    def _get_api_call_function(self, prompt: str, max_tokens: int) -> Callable[[], str]:
+        """Devuelve la función lambda correcta para realizar la llamada a la API síncrona."""
+        
+        if self.provider == 'gemini':
+            return lambda: self.client.generate_content(prompt).text
+
+        elif self.provider == 'groq':
+            return lambda: self.client.chat.completions.create(
+                messages=[{"role": "user", "content": prompt}],
+                model=self.model or "llama3-8b-8192",
+            ).choices[0].message.content
+
+        elif self.provider == 'ollama':
+            return lambda: self.client.chat(
+                model=self.model or 'llama3',
+                messages=[{'role': 'user', 'content': prompt}]
+            )['message']['content']
+
+        elif self.provider == 'anthropic':
+            return lambda: self.client.messages.create(
+                model=self.model or "claude-3-sonnet-20240229",
+                max_tokens=max_tokens,
+                messages=[{"role": "user", "content": prompt}]
+            ).content[0].text
+
+        elif self.provider == 'openai':
+            return lambda: self.client.chat.completions.create(
+                messages=[{"role": "user", "content": prompt}],
+                model=self.model or "gpt-4o",
+            ).choices[0].message.content
+            
+        else:
+            # Esto no debería ocurrir si el constructor funcionó, pero es una salvaguarda.
+            raise NotImplementedError(f"API call function not implemented for {self.provider}")
+
+
+
+---
+File: /ai_trend_researcher.py
+---
+
+# ai_trend_researcher.py
+# -*- coding: utf-8 -*-
+
+import asyncio
+import sys
+import os
+import signal
+import argparse
+from datetime import datetime
+from typing import Dict, List, Any, Optional, Tuple, Iterable
+
+from dotenv import load_dotenv
+
+from keyword_manager import KeywordManager
+from mcp_client_manager import MCPClientManager
+from platform_handlers import PlatformHandlerFactory
+from data_processor import KeywordExtractor, DataAnalyzer
+from report_generator import ReportManager
+from config_manager import ServerConfig, AppConfig, PlatformConfig
+from ai_client_manager import AIClientManager
+
+load_dotenv()
+
+
+# ----------------------------- utilidades -----------------------------
+
+def env_int(name: str, default: int) -> int:
+    try:
+        v = os.getenv(name)
+        return int(v) if v is not None else default
+    except ValueError:
+        return default
+
+def env_float(name: str, default: float) -> float:
+    try:
+        v = os.getenv(name)
+        return float(v) if v is not None else default
+    except ValueError:
+        return default
+
+def env_bool(name: str, default: bool) -> bool:
+    v = (os.getenv(name, str(default)) or "").strip().lower()
+    return v in ("1", "true", "t", "yes", "y", "on")
+
+def now_str() -> str:
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+def log(msg: str) -> None:
+    print(f"[{now_str()}] {msg}", flush=True)
+
+
+# --------------------------- núcleo investigador ---------------------------
+
+class AITrendResearcher:
+    """
+    Orquestador principal del flujo de investigación de tendencias de IA.
+    Mejora: control de concurrencia, timeouts, reintentos y CLI.
+    """
+
+    def __init__(
+        self,
+        platforms_filter: Optional[Iterable[str]] = None,
+        exclude_platforms: Optional[Iterable[str]] = None,
+        per_task_timeout: float = 35.0,
+        retries: int = 1,
+        concurrency: int = 4,
+        keywords_limit: Optional[int] = None,
+    ):
+        # Estado configuración / validaciones
+        AppConfig.print_config_status()
+        missing_vars = AppConfig.validate_required_env_vars()
+        if missing_vars:
+            log("✗ Faltan variables de entorno requeridas:")
+            for var in missing_vars:
+                log(f"  - {var}")
+            log("Por favor, complétalas en tu .env")
+            # No abortamos aquí: el sistema puede operar con subset (ej. sin Notion/Supabase)
+            # pero si faltan claves críticas de proveedor de IA, AIClientManager fallará.
+
+        # Cliente de IA
+        ai_provider = AppConfig.get_ai_provider()
+        api_key = AppConfig.get_api_key(ai_provider)
+        ai_model = AppConfig.get_ai_model(ai_provider)
+        self.ai_client_manager = AIClientManager(provider=ai_provider, api_key=api_key, model=ai_model)
+
+        # Palabras clave
+        self.keyword_manager = KeywordManager()
+
+        # Servidores MCP / plataformas
+        server_configs = ServerConfig.get_server_configs()
+        supported = set(PlatformConfig.get_supported_platforms())
+        wanted = set(p.strip() for p in (platforms_filter or supported))
+        excluded = set(p.strip() for p in (exclude_platforms or []))
+        self.platforms: List[str] = [p for p in wanted if p in supported and p not in excluded]
+
+        # Gestores
+        self.mcp_manager = MCPClientManager(server_configs)
+        self.keyword_extractor = KeywordExtractor(self.ai_client_manager)
+        self.data_analyzer = DataAnalyzer(self.ai_client_manager)
+        self.report_manager: Optional[ReportManager] = None
+
+        # Parámetros ejecución
+        self.per_task_timeout = float(per_task_timeout)
+        self.retries = int(max(0, retries))
+        self.semaphore = asyncio.Semaphore(int(max(1, concurrency)))
+        self.keywords_limit = int(keywords_limit) if keywords_limit else None
+
+    async def run_daily_research(self) -> str:
+        log(f"🚀 Starting AI trend research - {now_str()}")
+
+        try:
+            # 1) Conectar MCP
+            await self.mcp_manager.connect_all_servers()
+
+            # 2) Plataformas activas realmente disponibles
+            active_platforms = [p for p in self.platforms if self.mcp_manager.is_platform_available(p)]
+            if not active_platforms:
+                log("⚠️ No hay servidores MCP activos; nada que hacer.")
+                return ""
+
+            log(f"🌐 Servidores MCP activos: {active_platforms}")
+
+            # 3) Clientes opcionales para reportes
+            notion_client = self.mcp_manager.get_client("notion")
+            supabase_client = self.mcp_manager.get_client("supabase")
+            notion_parent_id = AppConfig.get_notion_parent_page_id()
+
+            # 4) Gestor de reportes
+            self.report_manager = ReportManager(
+                reports_dir=AppConfig.get_reports_directory(),
+                notion_client=notion_client,
+                notion_parent_id=notion_parent_id,
+                supabase_client=supabase_client,
+            )
+
+            # 5) Cargar keywords activas
+            active_keywords = self._load_active_keywords()
+            if self.keywords_limit is not None:
+                active_keywords = active_keywords[: self.keywords_limit]
+            log(f"🔑 Investigando {len(active_keywords)} keywords en {len(active_platforms)} plataformas: {active_keywords}")
+
+            # 6) Investigación concurrente con
+
+
+
+
+---
+File: /config_manager.py
+---
+
+# config_manager.py
+# -*- coding: utf-8 -*-
+
+# Importa el módulo 'os' para interactuar con el sistema operativo, principalmente para leer variables de entorno.
+import os
+# Importa herramientas de 'typing' para añadir anotaciones de tipo, mejorando la legibilidad y robustez del código.
+from typing import Dict, List, Any
+
+
+class ServerConfig:
+    """
+    Gestiona las configuraciones de los servidores MCP (Model Context Protocol).
+    Define cómo iniciar y conectar con los diferentes servicios externos (YouTube, GitHub, etc.).
+    """
+
+    @staticmethod
+    def _clean_env(env: Dict[str, Any]) -> Dict[str, str]:
+        """
+        Método privado para limpiar el diccionario de entorno.
+        Elimina claves con valores None o vacíos ("") y convierte todos los valores a string.
+        Esto es necesario porque algunas bibliotecas (como Pydantic, usada por MCP) no aceptan None en variables de entorno.
+        """
+        # Si el diccionario de entrada está vacío, devuelve uno vacío.
+        if not env:
+            return {}
+        # Devuelve un nuevo diccionario que solo incluye los ítems válidos y con valores casteados a string.
+        return {k: str(v) for k, v in env.items() if v not in (None, "")}
+
+    @staticmethod
+    def get_server_configs() -> Dict[str, Dict[str, Any]]:
+        """
+        Devuelve un diccionario que contiene la configuración detallada para cada servidor MCP.
+        Los servidores que requieren credenciales (API keys) se marcan con enabled=False si la clave no está presente.
+        """
+        # Lee todas las claves de API y tokens de las variables de entorno.
+        youtube_key   = os.getenv("YOUTUBE_API_KEY")
+        gh_token      = os.getenv("GITHUB_PERSONAL_ACCESS_TOKEN")
+        notion_key    = os.getenv("NOTION_API_KEY")
+        notion_parent = os.getenv("NOTION_PARENT_PAGE_ID")
+        supa_token    = os.getenv("SUPABASE_ACCESS_TOKEN")
+        silicon_key   = os.getenv("SILICONFLOW_API_KEY")
+
+        # Lee las rutas configurables desde el entorno para mayor portabilidad.
+        download_dir = os.getenv("RESEARCH_PAPERS_DIR", "research-papers")
+        research_hub_executable = os.getenv("RESEARCH_HUB_EXECUTABLE", "rust-research-mcp")
+
+        # Construye dinámicamente la lista de argumentos para el servidor de Notion.
+        notion_args = ["@ramidecodes/mcp-server-notion@latest", "-y"]
+        # Añade la clave de API a los argumentos solo si existe, para no exponer un argumento vacío.
+        if notion_key:
+            notion_args.append(f"--api-key={notion_key}")
+
+        # Construye dinámicamente la lista de argumentos para el servidor de Supabase.
+        supabase_args = ["-y", "@supabase/mcp-server-supabase@latest"]
+        # Añade el token de acceso a los argumentos solo si existe.
+        if supa_token:
+            supabase_args += ["--access-token", supa_token]
+
+        # Define el diccionario principal de configuraciones.
+        configs: Dict[str, Dict[str, Any]] = {
+            "youtube": {
+                "server_name": "npx",  # Comando para ejecutar el servidor (a través de npx).
+                "args": ["-y", "youtube-data-mcp-server"],  # Argumentos para el comando.
+                "env": ServerConfig._clean_env({  # Variables de entorno específicas para este servidor.
+                    "YOUTUBE_API_KEY": youtube_key,
+                    "YOUTUBE_TRANSCRIPT_LANG": "ja",  # Configura el idioma de las transcripciones a japonés.
+                }),
+                "tools": ["searchVideos", "getVideoDetails", "getTranscripts"],  # Herramientas que expone el servidor.
+                "required_env": ["YOUTUBE_API_KEY"],  # Variables de entorno obligatorias.
+                "enabled": True if youtube_key else False,  # Se activa solo si la clave de API está presente.
+            },
+            "github": {
+                "server_name": "npx",
+                "args": ["-y", "@modelcontextprotocol/server-github"],
+                "env": ServerConfig._clean_env({
+                    "GITHUB_PERSONAL_ACCESS_TOKEN": gh_token,
+                }),
+                "tools": ["search_code", "search_repositories", "get_repository"],
+                "required_env": ["GITHUB_PERSONAL_ACCESS_TOKEN"],
+                "enabled": True if gh_token else False, # Se activa solo si el token de GitHub está presente.
+            },
+            "web": {
+                "server_name": "one-search-mcp",  # Este servidor se ejecuta directamente, sin 'npx'.
+                "args": [],  # No necesita argumentos adicionales.
+                "env": {  # Variables de entorno para estandarizar y silenciar la salida de la consola.
+                    "DOTENVX_SILENT": "1",
+                    "FORCE_COLOR": "0",
+                    "NO_COLOR": "1"
+                },
+                "tools": ["one_search", "one_extract", "one_scrape"],
+                "enabled": True,  # Este servidor siempre está habilitado ya que no requiere claves.
+            },
+            "notion": {
+                "server_name": "npx",
+                "args": ["-y", *notion_args],  # Usa los argumentos construidos dinámicamente.
+                "env": ServerConfig._clean_env({}), # No necesita variables de entorno adicionales.
+                "tools": ["create-page", "get-page", "update-page", "query-database", "search"],
+                "required_env": ["NOTION_API_KEY"],
+                "enabled": True if notion_key else False, # Se activa solo si la clave de Notion está presente.
+            },
+            "arxiv": {
+                "server_name": "npx",
+                "args": ["-y", "@langgpt/arxiv-mcp-server@latest"],
+                "env": {
+                    "SILICONFLOW_API_KEY": silicon_key,
+                    "WORK_DIR": "./reports",  # Directorio de trabajo para descargar PDFs.
+                    "FORCE_COLOR": "0",
+                    "NO_COLOR": "1",
+                    "DOTENVX_SILENT": "1"
+                },
+                "tools": [
+                    "search_arxiv", "download_arxiv_pdf", "parse_pdf_to_text",
+                    "convert_to_wechat_article", "parse_pdf_to_markdown",
+                    "process_arxiv_paper", "clear_workdir"
+                ],
+                "enabled": bool(silicon_key), # Se activa solo si la clave de SiliconFlow está presente.
+            },
+            "hackernews": {
+                "server_name": "npx",
+                "args": ["-y", "@microagents/server-hackernews"],
+                "env": ServerConfig._clean_env({}),
+                "tools": ["getStories", "getStory", "getStoryWithComments"],
+                "required_env": [],  # No requiere variables de entorno.
+                "enabled": True,  # Siempre habilitado.
+            },
+            "supabase": {
+                "server_name": "npx",
+                "args": supabase_args,  # Usa los argumentos construidos dinámicamente.
+                "env": ServerConfig._clean_env({}),
+                "tools": ["execute_sql"],
+                "required_env": ["SUPABASE_ACCESS_TOKEN"],
+                "enabled": True if supa_token else False, # Se activa solo si el token de Supabase está presente.
+            },
+            "research_hub": {
+                "server_name": research_hub_executable,
+                "args": [
+                    "--download-dir", download_dir,
+                    "--log-level", "info"
+                ],
+                "env": {
+                    "RUST_LOG": "info",
+                    "DOTENVX_SILENT": "1",
+                    "FORCE_COLOR": "0",
+                    "NO_COLOR": "1"
+                },
+                "tools": [
+                    "search_papers", 
+                    "download_paper", 
+                    "extract_metadata",
+                    "search_code", 
+                    "generate_bibliography"
+                ],
+                "required_env": ["RESEARCH_HUB_EXECUTABLE", "RESEARCH_PAPERS_DIR"], 
+                "enabled": os.path.exists(research_hub_executable), # Se activa si el binario existe.
+            },
+        }
+        # Devuelve el diccionario completo de configuraciones.
+        return configs
+
+    @staticmethod
+    def get_enabled_platforms() -> List[str]:
+        """Devuelve una lista con los nombres de las plataformas que están actualmente habilitadas."""
+        configs = ServerConfig.get_server_configs()
+        # Crea una lista de plataformas donde el valor de 'enabled' es True.
+        return [platform for platform, config in configs.items() if config.get("enabled", False)]
+
+
+class AppConfig:
+    """Clase para gestionar la configuración general de la aplicación (proveedor de IA, modelos, etc.)."""
+
+    @staticmethod
+    def get_ai_provider() -> str:
+        """Obtiene el proveedor de IA configurado en .env, con 'openai' como valor por defecto."""
+        return os.getenv("AI_PROVIDER", "openai").lower()
+
+    @staticmethod
+    def get_api_key(provider: str) -> str:
+        """Obtiene la clave de API para un proveedor de IA específico."""
+        # Mapea el nombre del proveedor a su variable de entorno correspondiente.
+        provider_key_map = {
+            "anthropic": "ANTHROPIC_API_KEY",
+            "gemini": "GOOGLE_API_KEY",
+            "groq": "GROQ_API_KEY",
+            "openai": "OPENAI_API_KEY",
+            # 'ollama' se ejecuta localmente y no requiere clave.
+        }
+        # Obtiene el nombre de la variable de entorno del mapa.
+        env_var_name = provider_key_map.get(provider)
+        # Devuelve el valor de la variable de entorno si existe, si no, None.
+        return os.getenv(env_var_name) if env_var_name else None
+
+    @staticmethod
+    def get_ai_model(provider: str) -> str:
+        """Obtiene el nombre del modelo de IA específico para un proveedor, si está configurado."""
+        # Construye el nombre de la variable de entorno (ej. "AI_MODEL_OPENAI").
+        env_var_name = f"AI_MODEL_{provider.upper()}"
+        # Devuelve el valor de la variable de entorno.
+        return os.getenv(env_var_name)
+
+    @staticmethod
+    def get_notion_parent_page_id() -> str:
+        """Obtiene el ID de la página padre de Notion desde las variables de entorno."""
+        return os.getenv("NOTION_PARENT_PAGE_ID", "")
+
+    @staticmethod
+    def get_reports_directory() -> str:
+        """Devuelve el nombre del directorio donde se guardan los informes locales."""
+        return "reports"
+
+    @staticmethod
+    def validate_required_env_vars() -> List[str]:
+        """
+        Valida que todas las variables de entorno necesarias estén definidas.
+        Devuelve una lista con las variables que faltan.
+        """
+        # Define un diccionario de variables requeridas y su descripción.
+        required_vars = {
+            "YOUTUBE_API_KEY": "YouTube API key",
+            "GITHUB_PERSONAL_ACCESS_TOKEN": "GitHub access token",
+            "NOTION_API_KEY": "Notion API key",
+            "NOTION_PARENT_PAGE_ID": "Notion parent page ID",
+            "SUPABASE_ACCESS_TOKEN": "Supabase access token",
+            "RESEARCH_PAPERS_DIR": "Research papers download directory",
+            "RESEARCH_HUB_EXECUTABLE": "Path to the Research Hub executable"
+        }
+        # Añade la clave de API del proveedor de IA seleccionado a la lista de requeridos.
+        ai_provider = AppConfig.get_ai_provider()
+        api_key_env_var = {
+            "gemini": "GOOGLE_API_KEY",
+            "groq": "GROQ_API_KEY",
+            "anthropic": "ANTHROPIC_API_KEY",
+            "openai": "OPENAI_API_KEY",
+        }.get(ai_provider)
+        if api_key_env_var:
+            required_vars[api_key_env_var] = f"API Key for {ai_provider.capitalize()}"
+
+        # Crea una lista de las variables que no están definidas.
+        missing = [f"{var} ({desc})" for var, desc in required_vars.items() if not os.getenv(var)]
+        return missing
+
+    @staticmethod
+    def print_config_status():
+        """Imprime en la consola un resumen del estado de la configuración actual."""
+        print("=== Configuration Status ===")
+        ai_provider = AppConfig.get_ai_provider()
+        print(f"✓ AI Provider configured: {ai_provider.upper()}")
+
+        api_key = AppConfig.get_api_key(ai_provider)
+        if ai_provider not in ["ollama"]: # Ollama no necesita clave.
+            print(f"✓ {ai_provider.capitalize()} API key loaded" if api_key else f"✗ {ai_provider.capitalize()} API key not found")
+
+        ai_model = AppConfig.get_ai_model(ai_provider)
+        print(f"✓ Using specific model for {ai_provider}: {ai_model}" if ai_model else f"✓ Using default model for {ai_provider}")
+        print("---")
+
+        # Comprueba el estado de otras claves de API importantes.
+        other_vars = [
+            ("YOUTUBE_API_KEY", "YouTube API key"),
+            ("GITHUB_PERSONAL_ACCESS_TOKEN", "GitHub access token"),
+            ("NOTION_API_KEY", "Notion API key"),
+            ("NOTION_PARENT_PAGE_ID", "Notion parent page ID"),
+            ("SUPABASE_ACCESS_TOKEN", "Supabase access token"),
+            ("RESEARCH_PAPERS_DIR", "Research papers directory"),
+            ("RESEARCH_HUB_EXECUTABLE", "Research Hub executable"),
+        ]
+        for var, description in other_vars:
+            # Imprime un tick (✓) si la variable está cargada, o una cruz (✗) si no.
+            print(f"✓ {description} loaded" if os.getenv(var) else f"✗ {description} not found")
+        
+        if os.getenv("RESEARCH_HUB_EXECUTABLE") and not os.path.exists(os.getenv("RESEARCH_HUB_EXECUTABLE")):
+            print(f"✗ WARNING: Research Hub executable not found at specified path.")
+
+        print("============================")
+
+
+class PlatformConfig:
+    """Define las plataformas que la aplicación soporta para la investigación."""
+    # Lista fija de plataformas soportadas en el código.
+    SUPPORTED_PLATFORMS = ["web", "youtube", "github", "arxiv", "hackernews", "supabase", "research_hub"]
+
+    @staticmethod
+    def get_supported_platforms() -> List[str]:
+        """Devuelve una copia de la lista de plataformas soportadas."""
+        return PlatformConfig.SUPPORTED_PLATFORMS.copy()
+
+    @staticmethod
+    def is_platform_supported(platform: str) -> bool:
+        """Comprueba si una plataforma dada está en la lista de soportadas."""
+        return platform in PlatformConfig.SUPPORTED_PLATFORMS
+
+
+
+---
+File: /data_processor.py
+---
+
+# data_processor.py
+# -*- coding: utf-8 -*-
+
+# Importa el módulo 'asyncio' para ejecutar tareas síncronas en un hilo.
+import asyncio
+# Importa el módulo 'json' para trabajar con datos en formato JSON.
+import json
+# Importa el módulo 're' para trabajar con expresiones regulares (búsqueda de patrones en texto).
+import re
+# De 'collections', importa 'Counter' para contar fácilmente la frecuencia de elementos en una lista.
+from collections import Counter
+# De 'datetime', importa 'datetime' para obtener la fecha y hora actuales.
+from datetime import datetime
+# De 'typing', importa herramientas para anotaciones de tipo.
+from typing import Dict, List, Any
+
+# Importa el gestor de clientes de IA para que el analizador pueda usar LLMs.
+from ai_client_manager import AIClientManager
+
+class KeywordExtractor:
+    """
+    Extrae nuevas palabras clave a partir de los datos de investigación.
+    Utiliza un LLM (Modelo Lingüístico Grande) si está disponible para una extracción más inteligente.
+    Si no, recurre a un método heurístico local basado en frecuencia de palabras.
+    """
+    def __init__(self, ai_client_manager: AIClientManager = None):
+        """
+        Constructor. Recibe un gestor de cliente de IA.
+        Este gestor debe tener un método `async chat_completion(prompt, max_tokens=...)`.
+        """
+        self.ai_client = ai_client_manager
+
+    async def extract_keywords(self, research_data: List[Dict[str, Any]]) -> List[str]:
+        """
+        Método principal para extraer palabras clave.
+        Decide si usar el LLM o el método heurístico de respaldo.
+        """
+        # Si no hay datos de investigación, no hay nada que hacer.
+        if not research_data:
+            print("No hay datos de investigación para la extracción de keywords.")
+            return []
+
+        # Prepara un resumen compacto del contenido para no enviar demasiada información al LLM.
+        content_summary = self._prepare_content_for_analysis(research_data)
+
+        # Si después de preparar el resumen no hay contenido, usa la heurística sobre los datos brutos.
+        if not content_summary:
+            print("No se encontró contenido utilizable. Usando heurística sobre corpus completo.")
+            corpus = self._concat_corpus_from_raw(research_data)
+            return self._heuristic_keywords(corpus)
+
+        # Si hay un cliente de IA disponible, intenta usarlo.
+        if self.ai_client:
+            try:
+                # Crea el prompt (la instrucción) para el LLM.
+                prompt = self._create_extraction_prompt(content_summary)
+                # Llama al LLM para obtener una respuesta.
+                response = await self.ai_client.chat_completion(prompt, max_tokens=512)
+                # Parsea la respuesta del LLM para extraer la lista de palabras clave.
+                keywords = self._parse_keywords_from_response(response)
+                provider = getattr(self.ai_client, "provider", "ai").capitalize()
+                print(f"LLM ({provider}) extrajo {len(keywords)} keywords: {keywords}")
+                return keywords
+            except Exception as e:
+                # Si el LLM falla, informa del error y pasa al método de respaldo.
+                print(f"[KeywordExtractor] Fallo con LLM, usando heurística. Error: {e}")
+
+        # Si no hay cliente de IA o si falló, usa el método heurístico local.
+        corpus = self._concat_corpus(content_summary)
+        return self._heuristic_keywords(corpus)
+
+    # ---------- Métodos de utilidad internos ----------
+
+    def _prepare_content_for_analysis(self, research_data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Compacta los resultados de la investigación para crear un resumen manejable."""
+        content_summary: List[Dict[str, Any]] = []
+        for data in research_data:
+            results = data.get("results", [])
+            # Toma como máximo los 3 primeros resultados de cada plataforma para ser conciso.
+            for result in results[:3]:
+                content_summary.append({
+                    "platform": data.get("platform", ""),
+                    "keyword": data.get("keyword", ""),
+                    "title": result.get("title") or result.get("name") or "",
+                    # Acorta la descripción a 200 caracteres.
+                    "description": (result.get("description") or result.get("snippet") or result.get("abstract") or "")[:200],
+                    "topics": result.get("topics", []),
+                })
+        return content_summary
+
+    def _create_extraction_prompt(self, content_summary: List[Dict[str, Any]]) -> str:
+        """Crea el prompt que se enviará al LLM, pidiéndole que extraiga keywords en formato JSON."""
+        return (
+            "Analyze this AI trend research data and extract 5-10 new trending keywords related to AI, "
+            "machine learning, or technology.\n\n"
+            f"Data: {json.dumps(content_summary, indent=2, ensure_ascii=False)}\n\n"
+            "Instructions:\n"
+            "1. Focus on AI tools, frameworks, companies, techniques, or emerging technologies\n"
+            "2. Return only a JSON array of keywords, like: [\"keyword1\", \"keyword2\", \"keyword3\"]\n"
+            "3. Prioritize keywords that appear frequently or have high engagement\n"
+            "4. Include both English and Japanese keywords if relevant\n"
+            "5. If no relevant keywords are found, return an empty array: []\n"
+        )
+
+    def _parse_keywords_from_response(self, response: str) -> List[str]:
+        """Parsea la respuesta del LLM. Intenta leer un array JSON, y si falla, lo trata como texto plano."""
+        if not response:
+            return []
+        try:
+            # Busca una estructura que parezca un array JSON (empieza con [ y termina con ]).
+            m = re.search(r"\[.*?\]", response, re.DOTALL)
+            if m:
+                # Si lo encuentra, intenta decodificarlo como JSON.
+                arr = json.loads(m.group())
+                # Limpia y devuelve la lista de strings.
+                return [s.strip() for s in arr if isinstance(s, str) and s.strip()]
+        except Exception as e:
+            # Si el parseo JSON falla, lo informa.
+            print(f"Error parseando JSON de keywords: {e}")
+
+        # Si no es JSON, lo trata como texto plano separado por comas.
+        parts = response.replace("[", "").replace("]", "").replace('"', "")
+        kws = [p.strip() for p in parts.split(",") if p.strip()]
+        # Devuelve como máximo las 10 primeras.
+        return kws[:10]
+
+    def _concat_corpus(self, content_summary: List[Dict[str, Any]]) -> str:
+        """Une todos los textos del resumen (títulos, descripciones, temas) en un solo bloque de texto (corpus)."""
+        parts: List[str] = []
+        for item in content_summary:
+            parts.append(item.get("title", ""))
+            parts.append(item.get("description", ""))
+            topics = item.get("topics", [])
+            if isinstance(topics, list) and topics:
+                parts.extend([str(t) for t in topics])
+        return " \n".join([p for p in parts if p])
+
+    def _concat_corpus_from_raw(self, research_data: List[Dict[str, Any]]) -> str:
+        """Similar a _concat_corpus, pero trabaja directamente con los datos brutos de investigación."""
+        parts: List[str] = []
+        for d in research_data:
+            for r in d.get("results", []):
+                parts.append(r.get("title") or r.get("name") or "")
+                parts.append(r.get("description") or r.get("snippet") or r.get("abstract") or "")
+                topics = r.get("topics", [])
+                if isinstance(topics, list):
+                    parts.extend([str(t) for t in topics])
+        return " \n".join([p for p in parts if p])
+
+    def _heuristic_keywords(self, corpus: str) -> List[str]:
+        """
+        Método heurístico de respaldo para extraer keywords.
+        Se basa en encontrar las palabras y frases (n-gramas) más frecuentes.
+        """
+        if not corpus:
+            return []
+
+        text = corpus.lower()
+
+        # Extrae tokens (palabras) que parecen relevantes.
+        tokens = re.findall(r"[a-z0-9][a-z0-9\-_/\.]{2,}", text)
+        # Define una lista de palabras comunes (stop words) para ignorar.
+        stop = {
+            "https", "http", "www", "com", "org", "from", "with", "that", "this", "what", "when",
+            "your", "have", "about", "into", "like", "will", "there", "their", "been", "make",
+            "only", "some", "more", "over", "also", "than", "which", "were", "after", "before",
+            "because", "could", "should", "would"
+        }
+        tokens = [t for t in tokens if t not in stop]
+        # Obtiene las 20 palabras más comunes.
+        singles = [w for w, _ in Counter(tokens).most_common(20)]
+
+        # Busca frases de 2 palabras (bigramas) y 3 palabras (trigramas).
+        words = re.findall(r"[a-z0-9]+", text)
+        bigrams = [" ".join(words[i:i+2]) for i in range(len(words)-1)]
+        trigrams = [" ".join(words[i:i+3]) for i in range(len(words)-2)]
+        # Cuenta la frecuencia de los n-gramas más relevantes.
+        bf = Counter([b for b in bigrams if len(b) > 6])
+        tf = Counter([t for t in trigrams if len(t) > 8])
+
+        # Combina las palabras sueltas y los n-gramas más comunes.
+        candidates = singles + [w for w, _ in bf.most_common(10)] + [w for w, _ in tf.most_common(10)]
+        # Normaliza y limpia la lista final.
+        return self._normalize_keywords(candidates)
+
+    def _normalize_keywords(self, kws: List[str]) -> List[str]:
+        """Limpia una lista de keywords: convierte a minúsculas, quita espacios y duplicados."""
+        out: List[str] = []
+        for kw in kws:
+            k = re.sub(r"\s+", " ", kw.lower()).strip()
+            k = k.strip(" .,:;-/\\|\"'()[]{}")
+            if len(k) >= 3:
+                out.append(k)
+        # Elimina duplicados manteniendo el orden.
+        seen = set()
+        uniq = []
+        for k in out:
+            if k not in seen:
+                seen.add(k)
+                uniq.append(k)
+        return uniq
+
+
+class DataAnalyzer:
+    """Analiza los datos recolectados para calcular métricas, puntuar keywords y generar recomendaciones."""
+    
+    def __init__(self, ai_client_manager: AIClientManager = None):
+        """Constructor. Recibe el gestor de cliente de IA para generar recomendaciones dinámicas."""
+        self.ai_client = ai_client_manager
+
+    def score_keywords(self, new_keywords: List[str], research_data: List[Dict[str, Any]]) -> Dict[str, int]:
+        """Asigna una puntuación a cada nueva palabra clave basada en su frecuencia en los resultados de la investigación."""
+        if not new_keywords:
+            return {}
+
+        # Crea un gran bloque de texto (corpus) con todos los títulos, descripciones y temas.
+        parts: List[str] = []
+        for item in research_data:
+            for r in item.get("results", []):
+                title = r.get("title") or r.get("name") or ""
+                desc = r.get("description") or r.get("snippet") or r.get("abstract") or ""
+                topics = r.get("topics") or []
+                parts.append(title)
+                parts.append(desc)
+                if isinstance(topics, list):
+                    parts.extend([str(t) for t in topics])
+        text = " \n".join([p for p in parts if p]).lower()
+
+        # Cuenta cuántas veces aparece cada nueva palabra clave en el corpus.
+        hits_map: Dict[str, int] = {}
+        max_hits = 1
+        for kw in new_keywords:
+            if not kw:
+                continue
+            hits = len(re.findall(re.escape(kw.lower()), text))
+            hits_map[kw] = hits
+            if hits > max_hits:
+                max_hits = hits
+
+        # Normaliza las puntuaciones en una escala de 0 a 100 usando una escala logarítmica.
+        import math
+        scores: Dict[str, int] = {}
+        for kw, h in hits_map.items():
+            norm = math.log1p(h) / math.log1p(max_hits) if max_hits > 0 else 0.0
+            scores[kw] = int(round(norm * 100))
+        return scores
+
+    def calculate_summary_stats(self, research_data: List[Dict[str, Any]], new_keywords: List[str]) -> Dict[str, Any]:
+        """Calcula estadísticas agregadas básicas sobre la ejecución de la investigación."""
+        # Cuenta cuántas ejecuciones se hicieron por plataforma.
+        per_platform = Counter([d.get("platform", "unknown") for d in research_data])
+        # Suma el total de resultados obtenidos.
+        total_results = sum(len(d.get("results", [])) for d in research_data)
+        # Cuenta cuántas ejecuciones tuvieron errores.
+        runs_with_errors = sum(1 for d in research_data if d.get("error"))
+
+        return {
+            "timestamp": datetime.now().isoformat(),
+            "platform_breakdown": dict(per_platform),
+            "total_items": total_results,
+            "new_keywords_count": len(new_keywords),
+            "runs_with_errors": runs_with_errors,
+        }
+
+    async def generate_recommendations(self, research_data: List[Dict[str, Any]], new_keywords: List[str]) -> List[str]:
+        """Genera una lista de recomendaciones de acción, usando IA si está disponible."""
+        # Si no hay cliente de IA o no hay datos, usa el método de respaldo.
+        if not self.ai_client or (not research_data and not new_keywords):
+            return self._heuristic_recommendations(research_data, new_keywords)
+
+        try:
+            prompt = self._create_recommendation_prompt(research_data, new_keywords)
+            response = await self.ai_client.chat_completion(prompt, max_tokens=512)
+            # Parsea la respuesta en una lista de strings.
+            recommendations = [rec.strip("- ").strip() for rec in response.split("\n") if rec.strip("- ").strip()]
+            return recommendations if recommendations else ["No specific recommendations generated."]
+        except Exception as e:
+            print(f"Error generando recomendaciones con IA, usando heurística. Error: {e}")
+            return self._heuristic_recommendations(research_data, new_keywords)
+
+    def _create_recommendation_prompt(self, research_data: List[Dict[str, Any]], new_keywords: List[str]) -> str:
+        """Crea el prompt para que el LLM genere recomendaciones."""
+        summary_stats = self.calculate_summary_stats(research_data, new_keywords)
+        
+        # Prepara un resumen de los hallazgos más importantes para el prompt.
+        top_findings = []
+        for data in research_data:
+            platform = data.get("platform")
+            if data.get("results"):
+                top_result = data["results"][0]
+                title = top_result.get("title") or top_result.get("name")
+                if title:
+                    top_findings.append(f"- From {platform}: Found '{title}' related to '{data.get('keyword')}'.")
+        
+        return (
+            "You are an AI research analyst. Based on the following summary of a trend investigation, "
+            "provide 3-5 actionable and insightful recommendations for a research team. "
+            "Focus on what to investigate next, what technologies seem promising, and potential content ideas.\n\n"
+            f"--- Data Summary ---\n"
+            f"Total items found: {summary_stats['total_items']}\n"
+            f"Platforms with most results: {', '.join(summary_stats['platform_breakdown'].keys())}\n"
+            f"New keywords discovered: {', '.join(new_keywords)}\n"
+            f"Top findings:\n{''.join(top_findings[:5])}\n"
+            f"--- End of Summary ---\n\n"
+            "Generate the recommendations as a bulleted list (e.g., - Recommendation 1). Do not add any introductory text."
+        )
+
+    def _heuristic_recommendations(self, research_data: List[Dict[str, Any]], new_keywords: List[str]) -> List[str]:
+        """Genera una lista de recomendaciones de acción simples basadas en los resultados."""
+        recs: List[str] = []
+        platform_counts = Counter([d.get("platform", "unknown") for d in research_data])
+
+        # Añade recomendaciones específicas según las plataformas que devolvieron datos.
+        if platform_counts.get("github", 0) > 0:
+            recs.append("Priorizar repositorios con una alta tasa de estrellas (star_rate) y actividad reciente.")
+        if platform_counts.get("web", 0) > 0:
+            recs.append("Revisar los resultados web en japonés para detectar términos emergentes locales.")
+        if platform_counts.get("arxiv", 0) > 0:
+            recs.append("Leer los abstracts recientes de arXiv (≤ 30 días) para captar nuevas líneas de investigación.")
+        
+        # Si no hay recomendaciones, sugiere ampliar la búsqueda.
+        if not recs:
+            recs.append("Ampliar las fuentes o las palabras clave para obtener más señales.")
+        
+        # Si se encontraron nuevas keywords, sugiere explorarlas.
+        if new_keywords:
+            recs.append(f"Explorar en profundidad las nuevas keywords descubiertas: {', '.join(new_keywords[:5])}...")
+
+        return recs
+
+
+
+---
+File: /keyword_manager.py
+---
+
+import json
+import os
+from datetime import datetime
+from typing import Dict, List, Optional, Any, TypedDict
+
+# Define un tipo para la metadata de las keywords para mejorar la legibilidad y el autocompletado.
+class KeywordMetadata(TypedDict, total=False):
+    score: int
+    status: str
+    source: str
+    created_date: str
+    last_used: Optional[str]
+    discovered_from: Optional[str]
+
+MasterKeywords = Dict[str, KeywordMetadata]
+
+class KeywordManager:
+    """
+    Gestiona el ciclo de vida de las palabras clave con persistencia en archivos JSON.
+    Maneja tres archivos principales:
+      - keywords/master.json: Un catálogo de todas las keywords descubiertas con sus metadatos.
+      - keywords/active.json: Una lista simple de las keywords a investigar en la próxima ejecución.
+      - keywords/history.json: Un registro de las ejecuciones pasadas.
+    """
+
+    def __init__(self, keywords_dir: str = "keywords"):
+        """Constructor. Define las rutas a los archivos y se asegura de que existan."""
+        self.keywords_dir = keywords_dir
+        self.master_file = os.path.join(keywords_dir, "master.json")
+        self.active_file = os.path.join(keywords_dir, "active.json")
+        self.history_file = os.path.join(keywords_dir, "history.json")
+
+        # Asegura que el directorio 'keywords' exista.
+        os.makedirs(self.keywords_dir, exist_ok=True)
+        # Si los archivos JSON no existen, los crea con un contenido inicial vacío.
+        if not os.path.exists(self.master_file):
+            self._atomic_write(self.master_file, {})
+        if not os.path.exists(self.active_file):
+            self._atomic_write(self.active_file, [])
+        if not os.path.exists(self.history_file):
+            self._atomic_write(self.history_file, {})
+
+    # ---------------------------------
+    # Métodos para cargar/guardar JSON
+    # ---------------------------------
+    def load_master_keywords(self) -> MasterKeywords:
+        """Carga el catálogo maestro de keywords desde master.json."""
+        try:
+            with open(self.master_file, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                # Devuelve los datos solo si son un diccionario, para evitar errores.
+                return data if isinstance(data, dict) else {}
+        except (FileNotFoundError, json.JSONDecodeError):
+            # Si hay algún error (archivo no encontrado, JSON mal formado), devuelve un diccionario vacío.
+            return {}
+
+    def load_active_keywords(self) -> List[str]:
+        """Carga la lista de keywords activas desde active.json."""
+        try:
+            with open(self.active_file, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                # Devuelve los datos solo si son una lista.
+                return data if isinstance(data, list) else []
+        except (FileNotFoundError, json.JSONDecodeError):
+            # En caso de error, devuelve una lista vacía.
+            return []
+
+    def load_history(self) -> Dict[str, Any]:
+        """Carga el historial de ejecuciones desde history.json."""
+        try:
+            with open(self.history_file, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                # Devuelve los datos solo si son un diccionario.
+                return data if isinstance(data, dict) else {}
+        except (FileNotFoundError, json.JSONDecodeError):
+            # En caso de error, devuelve un diccionario vacío.
+            return {}
+
+    def save_master_keywords(self, keywords: MasterKeywords):
+        """Guarda el catálogo maestro de keywords en master.json."""
+        self._atomic_write(self.master_file, keywords)
+
+    def save_active_keywords(self, keywords: List[str]):
+        """Guarda la lista de keywords activas en active.json."""
+        self._atomic_write(self.active_file, keywords)
+
+    def save_history(self, history: Dict[str, Any]):
+        """Guarda el historial de ejecuciones en history.json."""
+        self._atomic_write(self.history_file, history)
+
+    def _atomic_write(self, path: str, data: Any):
+        """
+        Realiza una escritura "atómica" para evitar la corrupción de archivos.
+        Primero escribe en un archivo temporal (.tmp) y, si tiene éxito, lo renombra al archivo final.
+        """
+        tmp_path = path + ".tmp"
+        try:
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                # Vuelca los datos al archivo JSON con formato legible.
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            # Reemplaza el archivo original con el nuevo archivo temporal.
+            os.replace(tmp_path, path)
+        except Exception as e:
+            print(f"Error durante la escritura atómica en {path}: {e}")
+            # Si hubo un error, intenta eliminar el archivo temporal si existe.
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+
+
+    # ---------------------------------
+    # API pública para gestionar keywords
+    # ---------------------------------
+    def add_new_keyword(
+        self,
+        keyword: str,
+        score: int,
+        status: str,
+        source: str,
+        discovered_from: Optional[str] = None
+    ) -> bool:
+        """
+        Añade una nueva palabra clave al catálogo maestro si no existe previamente.
+        Devuelve True si la keyword fue añadida, False si ya existía.
+        """
+        # Limpia la keyword de espacios en blanco.
+        keyword = (keyword or "").strip()
+        if not keyword:
+            return False
+
+        master = self.load_master_keywords()
+        # Si la keyword ya está en el catálogo, no hace nada.
+        if keyword in master:
+            return False
+
+        # Crea la nueva entrada para la palabra clave.
+        now_date = datetime.now().strftime("%Y-%m-%d")
+        entry: KeywordMetadata = {
+            "score": int(score),
+            "status": status,
+            "source": source,
+            "created_date": now_date,
+            "last_used": None  # Aún no se ha usado para investigar.
+        }
+        if discovered_from:
+            entry["discovered_from"] = discovered_from
+
+        # Añade la nueva entrada al catálogo y lo guarda.
+        master[keyword] = entry
+        self.save_master_keywords(master)
+        return True
+
+    def update_keyword_score(self, keyword: str, new_score: int) -> bool:
+        """Actualiza la puntuación de una palabra clave existente."""
+        master = self.load_master_keywords()
+        if keyword in master:
+            master[keyword]["score"] = int(new_score)
+            self.save_master_keywords(master)
+            return True
+        return False
+
+    def mark_keywords_used(self, keywords: List[str]) -> None:
+        """Marca una lista de palabras clave como 'usadas' en la fecha actual."""
+        if not keywords:
+            return
+
+        master = self.load_master_keywords()
+        today = datetime.now().strftime("%Y-%m-%d")
+
+        changed = False
+        for kw in keywords:
+            kw = (kw or "").strip()
+            if not kw:
+                continue
+            # Si la keyword no existía por alguna razón, la crea con datos por defecto.
+            if kw not in master:
+                master[kw] = {
+                    "score": 0, "status": "unknown", "source": "runtime",
+                    "created_date": today, "last_used": today
+                }
+                changed = True
+            else:
+                # Actualiza la fecha del último uso.
+                master[kw]["last_used"] = today
+                changed = True
+
+        # Guarda los cambios solo si se realizó alguna modificación.
+        if changed:
+            self.save_master_keywords(master)
+
+    def record_execution(self, keywords: List[str], status: str = "completed", new_keywords_found: int = 0) -> None:
+        """Registra un resumen de la ejecución actual en el archivo de historial."""
+        history = self.load_history()
+        today = datetime.now().strftime("%Y-%m-%d")
+        # Crea o sobrescribe la entrada para el día de hoy.
+        history[today] = {
+            "keywords_used": keywords,
+            "execution_time": datetime.now().strftime("%H:%M:%S"),
+            "status": status,
+            "new_keywords_found": int(new_keywords_found)
+        }
+        self.save_history(history)
+
+    def get_top_keywords(self, limit: int = 10) -> List[str]:
+        """Devuelve una lista de las N mejores keywords según su puntuación y fecha de último uso."""
+        master = self.load_master_keywords()
+        
+        # Define una función de ordenación compleja:
+        def sort_key(item: tuple[str, KeywordMetadata]):
+            kw, meta = item
+            score = int(meta.get("score", 0))
+            # Trata 'None' o '' como la fecha más antigua para priorizar keywords nunca usadas.
+            last_used = meta.get("last_used") or "1970-01-01" 
+            # Ordena por puntuación descendente (-score) y luego por fecha de último uso ascendente.
+            return (-score, last_used)
+
+        # Ordena los ítems del catálogo usando la clave definida.
+        sorted_items = sorted(master.items(), key=sort_key)
+        # Devuelve solo los nombres de las keywords del top N.
+        return [kw for kw, _ in sorted_items[:limit]]
+
+    def refresh_active_keywords(self, limit: int = 5) -> List[str]:
+        """
+        Selecciona las mejores keywords del catálogo maestro y las guarda en active.json
+        para que sean usadas en la próxima ejecución.
+        """
+        top_keywords = self.get_top_keywords(limit=limit)
+        self.save_active_keywords(top_keywords)
+        return top_keywords
+
+
+
+---
+File: /mcp_client_manager.py
+---
+
+# mcp_client_manager.py
+# -*- coding: utf-8 -*-
+
+# Importa el módulo 'asyncio' para la programación asíncrona.
+import asyncio
+# Importa el módulo 'os' para leer variables de entorno.
+import os
+# Importa herramientas de 'typing' para anotaciones de tipo.
+from typing import Dict, List, Any, Optional
+# De 'contextlib', importa 'AsyncExitStack' para gestionar múltiples contextos asíncronos de forma segura.
+from contextlib import AsyncExitStack
+
+# Importa las clases necesarias de la biblioteca 'mcp'.
+from mcp import ClientSession
+from mcp.client.stdio import stdio_client, StdioServerParameters
+
+
+class RemoteMCPClient:
+    """
+    Representa un cliente para un único servidor MCP que se ejecuta como un proceso local (ej. iniciado con npx).
+    Gestiona la conexión, los reintentos, las llamadas a herramientas y el cierre seguro.
+    """
+
+    def __init__(self):
+        """Constructor. Inicializa el estado del cliente."""
+        self.session: Optional[ClientSession] = None  # La sesión de comunicación MCP.
+        self.exit_stack: Optional[AsyncExitStack] = None  # Para gestionar recursos asíncronos.
+        self._connected: bool = False  # Flag para indicar si la conexión está activa.
+        self._cleanup_attempted: bool = False  # Flag para evitar limpiezas duplicadas.
+        self._available_tools: List[str] = []  # Lista de herramientas que ofrece el servidor.
+
+    async def connect_to_server_by_name(
+        self,
+        server_name: str,
+        args: List[str] = None,
+        env: Dict[str, Any] = None
+    ) -> bool:
+        """
+        Establece una conexión con un servidor MCP a través de su entrada/salida estándar (stdio).
+        Implementa una lógica de reintentos y timeouts adaptables.
+        """
+        args = args or []
+        joined_args = " ".join(args)
+
+        # Heurística para definir timeouts de conexión más largos para servidores que tardan más en arrancar.
+        base_timeout = 15.0
+        if "one-search-mcp" in server_name or "one-search-mcp" in joined_args:
+            init_timeout = 45.0
+        elif "@langgpt/arxiv-mcp-server" in joined_args:
+            init_timeout = 60.0
+        else:
+            init_timeout = base_timeout
+
+        # Permite sobrescribir el timeout globalmente mediante una variable de entorno.
+        try:
+            init_timeout = float(os.getenv("MCP_INIT_TIMEOUT", init_timeout))
+        except (ValueError, TypeError):
+            pass
+
+        # Prepara el diccionario de entorno, limpiándolo de valores nulos o vacíos.
+        clean_env: Optional[Dict[str, str]] = None
+        if env:
+            cleaned = {k: str(v) for k, v in env.items() if v not in (None, "")}
+            clean_env = cleaned if cleaned else None
+
+        attempts = 2  # Número de intentos de conexión (1 original + 1 reintento).
+        last_err: Optional[BaseException] = None
+        full_cmd = " ".join([server_name] + args)
+
+        # Bucle de intentos de conexión.
+        for attempt in range(1, attempts + 1):
+            try:
+                # Prepara un 'AsyncExitStack' para este intento.
+                self.exit_stack = AsyncExitStack()
+
+                print(f"[MCP] Conectando a '{os.path.basename(server_name)}' (intento {attempt}/{attempts})")
+                if clean_env:
+                    print(f"      ┖─ Entorno: {list(clean_env.keys())}")
+                print(f"      ┖─ Timeout: {int(init_timeout)}s")
+
+
+                # Define los parámetros para iniciar el servidor como un subproceso.
+                server_params = StdioServerParameters(
+                    command=server_name,
+                    args=args,
+                    env=clean_env
+                )
+
+                # Inicia el cliente stdio, que a su vez lanza el proceso del servidor.
+                stdio_context = stdio_client(server_params)
+                # Entra en el contexto del cliente para obtener los streams de lectura y escritura.
+                read_stream, write_stream = await self.exit_stack.enter_async_context(stdio_context)
+
+                # Crea una sesión MCP usando los streams.
+                session_context = ClientSession(read_stream, write_stream)
+                self.session = await self.exit_stack.enter_async_context(session_context)
+
+                # Llama al método 'initialize' del servidor con un tiempo de espera.
+                try:
+                    await asyncio.wait_for(self.session.initialize(), timeout=init_timeout)
+                except asyncio.TimeoutError:
+                    raise TimeoutError(f"Timeout en initialize() para '{os.path.basename(server_name)}'")
+
+                # Si la inicialización es exitosa, obtiene la lista de herramientas disponibles.
+                response = await self.session.list_tools()
+                tools = response.tools
+                self._available_tools = [tool.name for tool in tools]
+                print(f"  ✓ Conexión exitosa a '{os.path.basename(server_name)}' | Herramientas: {self._available_tools}")
+
+                self._connected = True
+                return True  # Conexión exitosa, sale del bucle.
+
+            except Exception as e:
+                # Si ocurre un error, lo registra y se prepara para el siguiente intento.
+                last_err = e
+                print(f"  ✗ Error al conectar '{os.path.basename(server_name)}' (intento {attempt}/{attempts}): {e}")
+
+                # Limpia los recursos del intento fallido.
+                try:
+                    if self.exit_stack:
+                        await asyncio.wait_for(self.exit_stack.aclose(), timeout=5.0)
+                except Exception as close_err:
+                    print(f"    Aviso: Error durante la limpieza del intento fallido: {close_err}")
+
+
+                self.session = None
+                self.exit_stack = None
+                self._connected = False
+
+                # Espera un poco antes de reintentar.
+                if attempt < attempts:
+                    await asyncio.sleep(2.0)
+
+        print(f"  ✗ Fallo definitivo conectando a '{os.path.basename(server_name)}': {last_err}")
+        return False
+
+    async def call_tool(self, tool_name: str, arguments: Dict[str, Any]):
+        """Llama a una herramienta específica del servidor MCP conectado."""
+        if not self.session or not self._connected:
+            raise ConnectionError("No está conectado a ningún servidor MCP para llamar a la herramienta.")
+
+        try:
+            # Llama a la herramienta y espera la respuesta.
+            response = await self.session.call_tool(tool_name, arguments)
+            # Devuelve el contenido principal de la respuesta, que puede estar en 'content' o 'result'.
+            if hasattr(response, "content"):
+                return response.content
+            if hasattr(response, "result"):
+                return response.result
+            return response
+        except Exception as e:
+            print(f"✗ Error al llamar a la herramienta '{tool_name}': {e}")
+            # Devuelve None o relanza una excepción más específica.
+            return None
+
+    def get_available_tools(self) -> List[str]:
+        """Devuelve la lista de nombres de herramientas disponibles en el servidor."""
+        return self._available_tools
+
+    async def _cleanup(self):
+        """Método privado para cerrar y limpiar los recursos del cliente de forma segura."""
+        if self._cleanup_attempted:
+            return
+        self._cleanup_attempted = True
+
+        try:
+            # Usa el 'AsyncExitStack' para cerrar todos los contextos abiertos (sesión, proceso, etc.).
+            if self.exit_stack:
+                await asyncio.wait_for(self.exit_stack.aclose(), timeout=5.0)
+        except asyncio.TimeoutError:
+            print("Aviso: Tiempo de espera de limpieza agotado, forzando cierre")
+        except asyncio.CancelledError:
+            print("Aviso: La limpieza fue cancelada")
+        except Exception as e:
+            print(f"Aviso: Error durante la limpieza: {e}")
+        finally:
+            self.exit_stack = None
+
+    async def close(self):
+        """Método público para cerrar la conexión con el servidor de forma segura."""
+        if not self._connected:
+            return
+        self._connected = False
+        try:
+            # Llama al método de limpieza con un tiempo de espera.
+            await asyncio.wait_for(self._cleanup(), timeout=10.0)
+        except Exception as e:
+            print(f"Aviso: Error durante el cierre: {e}")
+        finally:
+            # Resetea el estado del cliente.
+            self.session = None
+            self.exit_stack = None
+
+
+class MCPClientManager:
+    """
+    Gestiona un conjunto de múltiples 'RemoteMCPClient', uno para cada plataforma.
+    Orquesta la conexión y desconexión de todos ellos.
+    """
+
+    def __init__(self, server_configs: Dict[str, Dict]):
+        """Constructor. Recibe las configuraciones de todos los servidores."""
+        self.server_configs = server_configs
+        # Diccionario para almacenar las instancias de cliente, una por plataforma.
+        self.clients: Dict[str, Optional[RemoteMCPClient]] = {}
+
+    async def connect_all_servers(self):
+        """Intenta conectar a todos los servidores que están marcados como habilitados en la configuración."""
+        print("\n[MCP] Conectando a todos los servidores habilitados...")
+        
+        # Crea tareas para conectar a todos los servidores en paralelo.
+        tasks = [
+            self._connect_single_server(platform, config)
+            for platform, config in self.server_configs.items()
+            if config.get("enabled", False)
+        ]
+        
+        # Ejecuta las tareas de conexión concurrentemente.
+        await asyncio.gather(*tasks)
+
+        # Imprime los servidores omitidos.
+        for platform, config in self.server_configs.items():
+            if not config.get("enabled", False):
+                print(f"  ↷ Omitido '{platform}' (deshabilitado en config)")
+
+
+    async def _connect_single_server(self, platform: str, config: Dict):
+        """Crea un cliente y intenta conectar a un único servidor MCP."""
+        try:
+            mcp_client = RemoteMCPClient()
+            args = config.get("args", [])
+            env = config.get("env", {})
+            # Llama al método de conexión del cliente.
+            success = await mcp_client.connect_to_server_by_name(config["server_name"], args, env)
+
+            # Si la conexión es exitosa, almacena el cliente. Si no, almacena None.
+            self.clients[platform] = mcp_client if success else None
+        except Exception as e:
+            print(f"  ✗ Fallo crítico al inicializar la conexión para {platform}: {e}")
+            self.clients[platform] = None
+
+    def get_client(self, platform: str) -> Optional[RemoteMCPClient]:
+        """Devuelve la instancia del cliente para una plataforma, o None si no está conectado."""
+        return self.clients.get(platform)
+
+    def is_platform_available(self, platform: str) -> bool:
+        """Comprueba si el cliente de una plataforma está conectado y disponible."""
+        client = self.clients.get(platform)
+        return client is not None and client._connected
+
+    def get_available_tools(self, platform: str) -> List[str]:
+        """Obtiene la lista de herramientas disponibles para una plataforma específica."""
+        client = self.get_client(platform)
+        return client.get_available_tools() if client else []
+
+    async def close_all_clients(self):
+        """
+        Cierra todos los clientes MCP conectados de forma SECUENCIAL.
+        Esto es importante en asyncio para evitar problemas de cancelación de tareas.
+        """
+        print("[MCP] Cerrando todos los clientes...")
+        # Itera sobre una copia de los ítems para poder modificar el diccionario original.
+        for platform, client in list(self.clients.items()):
+            if client:
+                try:
+                    print(f"      ┖─ Cerrando '{platform}'...")
+                    await client.close()  # Espera a que cada cliente se cierre antes de pasar al siguiente.
+                except Exception as e:
+                    print(f"      ┖─ Error al cerrar '{platform}': {e}")
+        # Limpia el diccionario de clientes.
+        self.clients.clear()
+        print("[MCP] Todos los clientes cerrados.")
+
+
+
+---
+File: /platform_handlers.py
+---
+
+# platform_handlers.py
+# -*- coding: utf-8 -*-
+
+# Este archivo es una versión consolidada y mejorada que fusiona la lógica de
+# platform_manager.py y platform_handlers.py, eliminando la redundancia.
+
+from abc import ABC, abstractmethod
+from typing import Dict, List, Any, Optional
+from datetime import datetime
+import json
+import re
+from collections import Counter
+from urllib.parse import urlparse
+
+# NOTA: No se importa AIClientManager aquí para evitar una dependencia circular.
+# Se pasa como un argumento en el método de la fábrica 'create_handler'.
+
+# ---------------- Clase Base ----------------
+class BasePlatformHandler(ABC):
+    """
+    Define la plantilla (interfaz) que todos los manejadores de plataforma deben seguir.
+    Garantiza una estructura consistente.
+    """
+    def __init__(self, platform_name: str):
+        """Constructor. Almacena el nombre de la plataforma."""
+        self.platform_name = platform_name
+    
+    @abstractmethod
+    async def research_keyword(self, client: Any, keyword: str, config: Dict) -> Dict[str, Any]:
+        """Método abstracto para la lógica de investigación. Debe ser implementado por las subclases."""
+        pass
+    
+    @abstractmethod
+    def process_response(self, response: Any, keyword: str) -> Dict[str, Any]:
+        """Método abstracto para procesar la respuesta cruda. Debe ser implementado por las subclases."""
+        pass
+    
+    def create_error_result(self, keyword: str, error: str) -> Dict[str, Any]:
+        """Método de utilidad para crear un resultado de error estandarizado."""
+        return {
+            "platform": self.platform_name, "keyword": keyword, "timestamp": datetime.now().isoformat(),
+            "results": [], "new_keywords": [], "sentiment_score": 0.0,
+            "engagement_metrics": {}, "error": str(error)
+        }
+
+# ---------------- Manejador de YouTube ----------------
+class YouTubeHandler(BasePlatformHandler):
+    """Manejador con la lógica específica para investigar en YouTube."""
+    def __init__(self):
+        super().__init__("youtube")
+    
+    async def research_keyword(self, client: Any, keyword: str, config: Dict) -> Dict[str, Any]:
+        try:
+            params = {"query": keyword, "order": "relevance", "type": "video", "max_results": 10}
+            tool_name = config["tools"][0]
+            response = await client.call_tool(tool_name, params)
+            return self.process_response(response, keyword)
+        except Exception as e:
+            return self.create_error_result(keyword, str(e))
+    
+    def process_response(self, response: Any, keyword: str) -> Dict[str, Any]:
+        results = []
+        data = self._extract_data_from_response(response)
+        videos = data.get('videos', data.get('items', [])) if isinstance(data, dict) else (data if isinstance(data, list) else [])
+        
+        for video in videos:
+            snippet = video.get('snippet', {})
+            video_id = video.get('id', {}).get('videoId', '')
+            if not video_id: continue
+
+            results.append({
+                'title': snippet.get('title', ''), 'description': snippet.get('description', ''),
+                'published_at': snippet.get('publishedAt', ''), 'channel': snippet.get('channelTitle', ''),
+                'video_id': video_id, 'url': f"https://www.youtube.com/watch?v={video_id}",
+                'content_type': self._classify_content(snippet.get('title', ''), snippet.get('description', '')),
+                'language': self._detect_language(snippet.get('title', '') + ' ' + snippet.get('description', ''))
+            })
+        return {
+            "platform": self.platform_name, "keyword": keyword, "timestamp": datetime.now().isoformat(),
+            "results": results, "new_keywords": [], "sentiment_score": 0.0,
+            "engagement_metrics": self._calculate_engagement_metrics(results)
+        }
+    
+    def _extract_data_from_response(self, response: Any) -> Any:
+        if isinstance(response, list) and len(response) > 0 and hasattr(response[0], 'text'):
+            try: return json.loads(response[0].text)
+            except (json.JSONDecodeError, AttributeError): return {}
+        elif hasattr(response, 'content'): return response.content
+        return response if isinstance(response, (dict, list)) else {}
+
+    def _classify_content(self, title: str, description: str) -> str:
+        text = (title + ' ' + description).lower()
+        if any(k in text for k in ['解説', '説明', '入門', '基礎', '学習', 'チュートリアル']): return "解説動画"
+        elif any(k in text for k in ['デモ', 'デモンストレーション', '実演', 'サンプル']): return "デモ"
+        elif any(k in text for k in ['カンファレンス', 'セミナー', '講演', '発表', 'talk']): return "カンファレンス"
+        elif any(k in text for k in ['ニュース', '最新', 'アップデート', 'リリース']): return "ニュース"
+        else: return "その他"
+    
+    def _detect_language(self, text: str) -> str:
+        if re.search(r'[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff]', text): return "ja"
+        return "en"
+    
+    def _calculate_engagement_metrics(self, results: List[Dict]) -> Dict:
+        return {"total_videos": len(results)}
+
+# ---------------- Manejador de GitHub ----------------
+class GitHubHandler(BasePlatformHandler):
+    """Manejador robusto para investigar en GitHub."""
+    def __init__(self):
+        super().__init__("github")
+    
+    async def research_keyword(self, client: Any, keyword: str, config: Dict) -> Dict[str, Any]:
+        try:
+            params = {
+                "query": f"{keyword} stars:>50", "sort": "stars",
+                "order": "desc", "per_page": 10
+            }
+            tool_name = "search_repositories"
+            response = await client.call_tool(tool_name, params)
+            return self.process_response(response, keyword)
+        except Exception as e:
+            return self.create_error_result(keyword, str(e))
+    
+    def process_response(self, response: Any, keyword: str) -> Dict[str, Any]:
+        results = []
+        repos = self._extract_repositories(response)
+        for repo in repos:
+            if isinstance(repo, dict):
+                stars = repo.get('stargazers_count', repo.get('stars', 0))
+                created_at = repo.get('created_at', '')
+                star_rate, days_old, is_trending = self._calculate_trend_metrics(stars, created_at)
+                results.append({
+                    'name': repo.get('name', ''), 'description': repo.get('description', ''),
+                    'owner': repo.get('owner', {}).get('login', ''), 'stars': stars, 'language': repo.get('language', ''),
+                    'url': repo.get('html_url', ''), 'created_at': created_at, 'topics': repo.get('topics', []),
+                    'star_rate': round(star_rate, 2), 'days_old': days_old, 'is_trending': is_trending,
+                    'trend_score': self._calculate_trend_score(stars, days_old, star_rate)
+                })
+        return {
+            "platform": self.platform_name, "keyword": keyword, "timestamp": datetime.now().isoformat(),
+            "results": results, "new_keywords": [], "sentiment_score": 0.0,
+            "engagement_metrics": self._calculate_engagement_metrics(results)
+        }
+    
+    def _extract_repositories(self, response: Any) -> List[Dict]:
+        if not response: return []
+        if isinstance(response, str):
+            try: return self._extract_repositories(json.loads(response))
+            except json.JSONDecodeError: return []
+        if isinstance(response, list) and len(response) > 0 and hasattr(response[0], 'text'):
+            try: return self._extract_repositories(json.loads(response[0].text))
+            except (json.JSONDecodeError, AttributeError): return []
+        if isinstance(response, list): return response
+        if isinstance(response, dict): return response.get('items', response.get('repositories', []))
+        return []
+
+    def _calculate_trend_metrics(self, stars: int, created_at: str) -> tuple:
+        if not created_at or not isinstance(stars, int): return (0.0, 0, False)
+        try:
+            created_date = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
+            days_old = (datetime.now(created_date.tzinfo) - created_date).days
+            if days_old <= 0: return (stars, 0, False)
+            star_rate = stars / days_old
+            is_trending = (stars >= 100 and days_old <= 365 and star_rate > 0.5)
+            return (star_rate, days_old, is_trending)
+        except (ValueError, TypeError): return (0.0, 0, False)
+    
+    def _calculate_trend_score(self, stars: int, days_old: int, star_rate: float) -> float:
+        if days_old <= 0: return 0.0
+        base_score = min(star_rate * 10, 50)
+        recency_bonus = max(0, (365 - days_old) / 365 * 30)
+        star_bonus = min(stars / 200, 20)
+        return round(min(base_score + recency_bonus + star_bonus, 100), 2)
+    
+    def _calculate_engagement_metrics(self, results: List[Dict]) -> Dict:
+        if not results: return {"repo_count": 0}
+        languages = [r.get('language') for r in results if r.get('language')]
+        return {
+            "repo_count": len(results),
+            "total_stars": sum(r.get('stars', 0) for r in results),
+            "trending_repos_count": sum(1 for r in results if r.get('is_trending')),
+            "top_languages": dict(Counter(languages).most_common(3)) if languages else {}
+        }
+
+# ---------------- Manejador de Web ----------------
+class WebHandler(BasePlatformHandler):
+    def __init__(self):
+        super().__init__("web")
+    
+    async def research_keyword(self, client: Any, keyword: str, config: Dict) -> Dict[str, Any]:
+        try:
+            params = {"query": f"{keyword} site:github.com OR site:arxiv.org OR site:huggingface.co", "language": "ja", "region": "jp", "max_results": 10}
+            tool_name = config["tools"][0]
+            response = await client.call_tool(tool_name, params)
+            return self.process_response(response, keyword)
+        except Exception as e:
+            return self.create_error_result(keyword, str(e))
+    
+    def process_response(self, response: Any, keyword: str) -> Dict[str, Any]:
+        results = self._parse_web_results(response)
+        return {
+            "platform": self.platform_name, "keyword": keyword, "timestamp": datetime.now().isoformat(),
+            "results": results, "new_keywords": [], "sentiment_score": 0.0,
+            "engagement_metrics": {"search_count": len(results)}
+        }
+    
+    def _parse_web_results(self, response: Any) -> List[Dict]:
+        if isinstance(response, list) and len(response) > 0 and hasattr(response[0], 'text'):
+            try: response = json.loads(response[0].text)
+            except (json.JSONDecodeError, AttributeError): response = {}
+        
+        results = []
+        web_results = response.get('results', []) if isinstance(response, dict) else []
+        for result in web_results:
+            url = result.get('url', result.get('link', ''))
+            results.append({
+                'title': result.get('title', ''), 'snippet': result.get('snippet', ''),
+                'url': url, 'source': urlparse(url).netloc if url else ''
+            })
+        return results
+
+# ---------------- Manejador de ArXiv ----------------
+class ArxivHandler(BasePlatformHandler):
+    def __init__(self, ai_client_manager: Optional[Any] = None):
+        super().__init__("arxiv")
+        self.ai_client = ai_client_manager
+    
+    async def research_keyword(self, client: Any, keyword: str, config: Dict) -> Dict[str, Any]:
+        try:
+            english_query = await self._translate_keyword(keyword)
+            params = {"query": english_query, "max_results": 10, "sort_by": "relevance"}
+            response = await client.call_tool("search_arxiv", params)
+            return self.process_response(response, keyword)
+        except Exception as e:
+            return self.create_error_result(keyword, str(e))
+
+    async def _translate_keyword(self, keyword: str) -> str:
+        if not self.ai_client or not re.search(r'[\u3040-\u30ff]', keyword): return keyword
+        try:
+            prompt = f"Translate the following Japanese technical keyword to English for an ArXiv search. Provide only the English translation, no extra text. Keyword: '{keyword}'"
+            translation = await self.ai_client.chat_completion(prompt)
+            return translation.strip().replace('"', '') or keyword
+        except Exception: return keyword
+            
+    def process_response(self, response: Any, keyword: str) -> Dict[str, Any]:
+        results = []
+        papers = self._extract_papers(response)
+        for paper in papers:
+            if isinstance(paper, dict):
+                published_date = paper.get('published', '')
+                days_old, is_recent = self._calculate_time_metrics(published_date)
+                results.append({
+                    'title': paper.get('title', ''), 'abstract': paper.get('summary', ''),
+                    'authors': paper.get('authors', []), 'published_date': published_date,
+                    'url': paper.get('url', ''), 'days_old': days_old, 'is_recent': is_recent,
+                })
+        return {
+            "platform": self.platform_name, "keyword": keyword, "timestamp": datetime.now().isoformat(),
+            "results": results, "new_keywords": [], "sentiment_score": 0.0,
+            "engagement_metrics": {"paper_count": len(results), "recent_paper_count": sum(1 for r in results if r['is_recent'])}
+        }
+
+    def _extract_papers(self, response: Any) -> List[Dict]:
+        if isinstance(response, list) and len(response)>0 and hasattr(response[0], 'text'):
+            try: response = json.loads(response[0].text)
+            except (json.JSONDecodeError, AttributeError): return []
+        if isinstance(response, dict): return response.get('results', [])
+        if isinstance(response, list): return response
+        return []
+
+    def _calculate_time_metrics(self, published_date: str) -> tuple:
+        if not published_date: return (9999, False)
+        try:
+            pub_date = datetime.fromisoformat(published_date.replace('Z', '+00:00'))
+            days_old = (datetime.now(pub_date.tzinfo) - pub_date).days
+            return (days_old, days_old <= 90)
+        except (ValueError, TypeError): return (9999, False)
+
+# ---------------- Manejador de HackerNews ----------------
+class HackerNewsHandler(BasePlatformHandler):
+    def __init__(self, ai_client_manager: Optional[Any] = None):
+        super().__init__("hackernews")
+        self.ai_client = ai_client_manager
+        
+    async def research_keyword(self, client: Any, keyword: str, config: Dict) -> Dict[str, Any]:
+        try:
+            english_keyword = await self._translate_keyword(keyword)
+            # HackerNews tool might be named 'search' or similar, adapt as needed.
+            # Assuming the tool is 'getStories' for this implementation.
+            params = {"query": english_keyword, "max_results": 15}
+            response = await client.call_tool(config['tools'][0], params)
+            return self.process_response(response, keyword)
+        except Exception as e:
+            return self.create_error_result(keyword, str(e))
+    
+    async def _translate_keyword(self, keyword: str) -> str:
+        # Same translation logic as Arxiv
+        if not self.ai_client or not re.search(r'[\u3040-\u30ff]', keyword): return keyword
+        try:
+            prompt = f"Translate the following Japanese keyword to a simple English equivalent for a HackerNews search. Provide only the English translation. Keyword: '{keyword}'"
+            translation = await self.ai_client.chat_completion(prompt)
+            return translation.strip().replace('"', '') or keyword
+        except Exception: return keyword
+
+    def process_response(self, response: Any, keyword: str) -> Dict[str, Any]:
+        results = []
+        posts = self._extract_posts(response)
+        for post in posts:
+            if isinstance(post, dict):
+                results.append({
+                    'title': post.get('title', ''), 'url': post.get('url', ''),
+                    'score': post.get('score', post.get('points', 0)),
+                    'comments_count': post.get('descendants', post.get('num_comments', 0)),
+                })
+        return {
+            "platform": self.platform_name, "keyword": keyword, "timestamp": datetime.now().isoformat(),
+            "results": results, "new_keywords": [], "sentiment_score": 0.0,
+            "engagement_metrics": self._calculate_engagement_metrics(results)
+        }
+    
+    def _extract_posts(self, response: Any) -> List[Dict]:
+        if isinstance(response, list): return response
+        if isinstance(response, dict): return response.get('hits', [])
+        return []
+
+    def _calculate_engagement_metrics(self, results: List[Dict]) -> Dict:
+        if not results: return {"post_count": 0}
+        post_count = len(results)
+        total_score = sum(r.get('score', 0) for r in results)
+        return {"post_count": post_count, "avg_score": round(total_score / post_count if post_count > 0 else 0)}
+
+# ---------------- Manejador de Supabase (Placeholder) ----------------
+class SupabaseHandler(BasePlatformHandler):
+    def __init__(self):
+        super().__init__("supabase")
+    
+    async def research_keyword(self, client: Any, keyword: str, config: Dict) -> Dict[str, Any]:
+        return self.create_error_result(keyword, "Supabase no se utiliza para la investigación de keywords.")
+    
+    def process_response(self, response: Any, keyword: str) -> Dict[str, Any]:
+        return self.create_error_result(keyword, "Supabase no se utiliza para la investigación de keywords.")
+
+# ---------------- Manejador de Research Hub ----------------
+class ResearchHubHandler(BasePlatformHandler):
+    def __init__(self):
+        super().__init__("research_hub")
+
+    async def research_keyword(self, client: Any, keyword: str, config: Dict) -> Dict[str, Any]:
+        try:
+            params = {"query": keyword, "limit": 10}
+            response = await client.call_tool("search_papers", params)
+            return self.process_response(response, keyword)
+        except Exception as e:
+            return self.create_error_result(keyword, str(e))
+
+    def process_response(self, response: Any, keyword: str) -> Dict[str, Any]:
+        results = []
+        papers_data = response
+        if isinstance(response, list) and len(response) > 0 and hasattr(response[0], 'content'):
+            try: papers_data = json.loads(response[0].content)
+            except (json.JSONDecodeError, AttributeError): papers_data = []
+
+        if isinstance(papers_data, list):
+            for paper in papers_data:
+                results.append({
+                    'title': paper.get('title', 'N/A'), 'authors': ", ".join(paper.get('authors', [])),
+                    'url': paper.get('url', ''), 'abstract': paper.get('summary', ''),
+                    'source': paper.get('source', 'Unknown'), 'year': paper.get('year', 0)
+                })
+        return {
+            "platform": self.platform_name, "keyword": keyword, "timestamp": datetime.now().isoformat(),
+            "results": results, "new_keywords": [], "sentiment_score": 0.0,
+            "engagement_metrics": self._calculate_engagement_metrics(results)
+        }
+
+    def _calculate_engagement_metrics(self, results: List[Dict]) -> Dict:
+        if not results: return {"paper_count": 0, "recent_papers_count": 0}
+        current_year = datetime.now().year
+        recent_papers = sum(1 for p in results if p.get('year', 0) >= current_year - 2)
+        return {"paper_count": len(results), "recent_papers_count": recent_papers}
+
+# ---------------- Fábrica de Manejadores ----------------
+class PlatformHandlerFactory:
+    """Utiliza el patrón de diseño Factory para crear el manejador de plataforma correcto."""
+    
+    _handler_classes: Dict[str, Any] = {
+        "youtube": YouTubeHandler,
+        "github": GitHubHandler,
+        "web": WebHandler,
+        "arxiv": ArxivHandler,
+        "hackernews": HackerNewsHandler,
+        "supabase": SupabaseHandler,
+        "research_hub": ResearchHubHandler
+    }
+
+    @staticmethod
+    def create_handler(platform: str, ai_client_manager: Optional[Any] = None) -> BasePlatformHandler:
+        handler_class = PlatformHandlerFactory._handler_classes.get(platform)
+        if not handler_class:
+            raise ValueError(f"No hay un manejador disponible para la plataforma: {platform}")
+        
+        # Inyecta el cliente de IA si el constructor del manejador lo acepta.
+        import inspect
+        sig = inspect.signature(handler_class.__init__)
+        if 'ai_client_manager' in sig.parameters:
+            return handler_class(ai_client_manager=ai_client_manager)
+        else:
+            return handler_class()
+
+
+
+---
+File: /README.md
+---
+
+# AI Trend Research Engine
+
+Basado en los repositorios:
+[EmpowerHerDev/ai-trend-research-system](https://github.com/EmpowerHerDev/ai-trend-research-system) y [Ladvien/research_hub_mcp](https://github.com/Ladvien/research_hub_mcp)
+
+![Python Version](https://img.shields.io/badge/python-3.9%2B-blue)![License](https://img.shields.io/badge/license-MIT-green)![Status](https://img.shields.io/badge/status-activo-brightgreen)
+
+<p align="center">
+  <strong>Languages:</strong>
+  <br>
+  <a href="#-english">English</a> | <a href="#-español">Español</a> | <a href="#-català">Català</a>
+</p>
+
+---
+
+<a name="-english"></a>
+## 🇬🇧 English
+
+<details>
+<summary><strong>Table of Contents</strong></summary>
+
+- [🚀 Key Features](#-key-features)
+- [🏛️ Project Architecture](#️-project-architecture)
+- [🛠️ Installation and Setup](#️-installation-and-setup)
+  - [1. Prerequisites](#1-prerequisites)
+  - [2. Clone the Repository](#2-clone-the-repository)
+  - [3. Install Python Dependencies](#3-install-python-dependencies)
+  - [4. Configure Environment Variables](#4-configure-environment-variables)
+  - [5. Set Up the Database (Supabase)](#5-set-up-the-database-supabase)
+- [▶️ Usage](#️-usage)
+  - [Daily Trend Research](#daily-trend-research)
+  - [Deep Dive Research](#deep-dive-research)
+- [🤝 Contributing](#-contributing)
+- [📄 License](#-license)
+
+</details>
+
+An automated and modular system for researching trends in Artificial Intelligence. It collects and processes data from multiple platforms (GitHub, YouTube, ArXiv, etc.), uses language models (LLMs) to extract insights, discover new keywords, and generates comprehensive reports in multiple formats (JSON, Notion, Supabase).
+
+**Note:** This project was developed by modifying the [EmpowerHerDev/ai-trend-research-system](https://github.com/EmpowerHerDev/ai-trend-research-system) project and integrating the custom research server from [Ladvien/research_hub_mcp](https://github.com/Ladvien/research_hub_mcp). The result is a flexible and modular system that now supports multiple large language model (LLM) providers, including **OpenAI (GPT), Google (Gemini), Anthropic (Claude), Groq, and Ollama**. This work is also part of a personal learning journey in the field of artificial intelligence agent development.
+
+### 🚀 Key Features
+
+-   **Multi-Platform Research**: Gathers data from YouTube, GitHub, web searches, ArXiv, HackerNews, and a custom paper research engine.
+-   **AI-Powered Processing**: Uses LLMs (OpenAI, Gemini, Groq, Anthropic, Ollama) for advanced tasks such as:
+    -   Intelligent extraction of new keywords.
+    -   Generation of dynamic and contextual recommendations.
+    -   Translation of search terms for multilingual queries.
+-   **Asynchronous Architecture**: Built with `asyncio` for high concurrency and efficiency in network operations and process handling.
+-   **Report Generation**: Automatically creates detailed reports in:
+    -   **JSON**: Local files for archiving and analysis.
+    -   **Notion**: Structured and easy-to-read pages in your workspace.
+    -   **Supabase**: Records in a PostgreSQL database for long-term persistence.
+-   **Keyword Management**: Maintains a lifecycle for keywords, with a master catalog, an active list for research, and a history of executions.
+-   **Highly Configurable**: All settings (API keys, AI model selection, file paths) are managed through a `.env` file for easy portability and security.
+-   **Standard Protocol**: Uses the **Model Context Protocol (MCP)** to communicate with each platform's servers, ensuring a standardized and decoupled interface.
+
+### 🏛️ Project Architecture
+
+The system is designed with a modular and decoupled architecture to facilitate maintenance and extension.
+
+-   `ai_trend_researcher.py`: The main orchestrator that runs the daily research workflow.
+-   `config_manager.py`: Centralizes the loading and validation of all configurations from the `.env` file.
+-   `mcp_client_manager.py`: Manages the lifecycle (connection, calls, closing) of clients for each platform's MCP servers.
+-   `platform_handlers.py`: Contains the specific logic to interact with each platform (e.g., `YouTubeHandler`, `GitHubHandler`), process their data, and standardize it.
+-   `data_processor.py`: Handles data analysis, keyword extraction, and recommendation generation using both heuristics and LLMs.
+-   `ai_client_manager.py`: Acts as a factory to interact uniformly with different language model providers (OpenAI, Gemini, etc.).
+-   `report_generator.py`: Generates the final reports in all supported formats (JSON, Notion, Supabase).
+-   `keyword_manager.py`: Manages the keyword database in JSON files.
+-   `research_assistant.py`: An advanced script for performing deep research dives using the custom `research_hub` server.
+
+### 🛠️ Installation and Setup
+
+Follow these steps to get the project running in your local environment.
+
+#### 1. Prerequisites
+
+-   **Python 3.9+**
+-   **Node.js and npm** (required for `npx`, which runs the community's MCP servers).
+-   **Git**
+-   (Optional) **Rust Compiler**, if you want to compile the `research_hub` executable from the source code.
+
+#### 2. Clone the Repository
+
+```bash
+git clone https://github.com/your_user/your_repository.git
+cd your_repository
+```
+
+#### 3. Install Python Dependencies
+
+Create a virtual environment (recommended) and install the required libraries.
+
+```bash
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+pip install -r requirements.txt
+```
+
+#### 4. Configure Environment Variables
+
+This is the most important step. The project is controlled via a `.env` file.
+
+1.  Copy the example file:
+    ```bash
+    cp .env.example .env
+    ```
+2.  Edit the `.env` file with a text editor and fill in all the necessary API keys and paths.
+
+```env
+# .env.example
+
+# --- API Keys (Required for the platforms you use) ---
+YOUTUBE_API_KEY=AIzaSy...
+GITHUB_PERSONAL_ACCESS_TOKEN=ghp_...
+NOTION_API_KEY=secret_...
+SUPABASE_ACCESS_TOKEN=eyJhbGciOi...
+SILICONFLOW_API_KEY= # Optional, for the ArXiv server
+
+# --- Notion Configuration (Required if using Notion) ---
+NOTION_PARENT_PAGE_ID=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+
+# --- System Path Configuration (IMPORTANT!) ---
+# Modify these paths to point to directories on your machine.
+RESEARCH_PAPERS_DIR="/home/user/documents/research-papers"
+RESEARCH_HUB_EXECUTABLE="/home/user/projects/rust-research-mcp/target/release/rust-research-mcp"
+
+# --- AI Provider Configuration ---
+# Choose one: "openai", "gemini", "groq", "anthropic", "ollama"
+AI_PROVIDER="openai"
+
+# Fill in the API key for your chosen provider.
+OPENAI_API_KEY="sk-..."
+GOOGLE_API_KEY="AIzaSy..."
+GROQ_API_KEY="gsk_..."
+ANTHROPIC_API_KEY="sk-ant-..."
+
+# --- (Optional) Specific AI Models ---
+# If left blank, default models will be used.
+AI_MODEL_OPENAI="gpt-4o"
+AI_MODEL_GEMINI="gemini-1.5-flash"
+AI_MODEL_GROQ="llama3-70b-8192"
+AI_MODEL_ANTHROPIC="claude-3-haiku-20240307"
+AI_MODEL_OLLAMA="llama3"
+```
+
+#### 5. Set Up the Database (Supabase)
+
+If you plan to use the Supabase integration, make sure your database table matches the schema defined in `supabase_schema.sql`. You can run this script in the SQL editor of your Supabase project.
+
+### ▶️ Usage
+
+Once configured, you can run the two main workflows.
+
+#### Daily Trend Research
+
+This is the main workflow. It will run the research on all enabled platforms, analyze the data, and generate reports.
+
+```bash
+python ai_trend_researcher.py
+```
+
+The script will print its progress to the console. Upon completion, you will find the JSON report in the `reports/` directory and, if configured, a new page in Notion and a new record in your Supabase table.
+
+#### Deep Dive Research
+
+This script uses the `research_hub` server to perform advanced paper searches, download them, analyze them, and generate bibliographies.
+
+1.  Ensure the `research_hub` executable is correctly configured in your `.env`.
+2.  (Optional) Add search terms to the `terminos.txt` file.
+
+```bash
+python research_assistant.py
+```
+
+The results of this execution (CSVs, JSONs, BibTeX files, and logs) will be saved in subdirectories within `salidas/` to keep each run organized.
+
+### 🤝 Contributing
+
+Contributions are welcome. If you have ideas for improving the project, new platforms to integrate, or find any bugs, please open an issue or submit a pull request.
+
+### 📄 License
+
+This project is licensed under the MIT License. See the `LICENSE` file for more details.
+
+---
+
+<a name="-español"></a>
+## 🇪🇸 Español
+
+<details>
+<summary><strong>Tabla de Contenidos</strong></summary>
+
+- [🚀 Características Principales](#-características-principales)
+- [🏛️ Arquitectura del Proyecto](#️-arquitectura-del-proyecto)
+- [🛠️ Instalación y Configuración](#️-instalación-y-configuración)
+  - [1. Prerrequisitos](#1-prerrequisitos)
+  - [2. Clonar el Repositorio](#2-clonar-el-repositorio)
+  - [3. Instalar Dependencias de Python](#3-instalar-dependencias-de-python)
+  - [4. Configurar las Variables de Entorno](#4-configurar-las-variables-de-entorno)
+  - [5. Configurar la Base de Datos (Supabase)](#5-configurar-la-base-de-datos-supabase)
+- [▶️ Uso](#️-uso)
+  - [Investigación Diaria de Tendencias](#investigación-diaria-de-tendencias)
+  - [Inmersión Profunda de Investigación](#inmersión-profunda-de-investigación)
+- [🤝 Contribuciones](#-contribuciones)
+- [📄 Licencia](#-licencia)
+
+</details>
+
+Un sistema automatizado y modular para la investigación de tendencias en Inteligencia Artificial. Recopila y procesa datos de múltiples plataformas (GitHub, YouTube, ArXiv, etc.), utiliza modelos de lenguaje (LLMs) para extraer *insights*, descubrir nuevas palabras clave y genera informes completos en múltiples formatos (JSON, Notion, Supabase).
+
+**Nota:** Este proyecto ha sido desarrollado modificando el proyecto [EmpowerHerDev/ai-trend-research-system](https://github.com/EmpowerHerDev/ai-trend-research-system) e integrando el servidor de investigación personalizado de [Ladvien/research_hub_mcp](https://github.com/Ladvien/research_hub_mcp). El resultado es un sistema flexible y modular que ahora es compatible con múltiples proveedores de modelos de lenguaje grande (LLM), incluyendo **OpenAI (GPT), Google (Gemini), Anthropic (Claude), Groq y Ollama**. Este trabajo también forma parte de un proceso de aprendizaje personal en el campo del desarrollo de agentes de inteligencia artificial.
+
+### 🚀 Características Principales
+
+-   **Investigación Multiplataforma**: Recopila datos de YouTube, GitHub, búsquedas web, ArXiv, HackerNews y un motor de investigación de *papers* personalizado.
+-   **Procesamiento con IA**: Utiliza LLMs (OpenAI, Gemini, Groq, Anthropic, Ollama) para tareas avanzadas como:
+    -   Extracción inteligente de nuevas palabras clave.
+    -   Generación de recomendaciones dinámicas y contextuales.
+    -   Traducción de términos de búsqueda para consultas multilingües.
+-   **Arquitectura Asíncrona**: Construido con `asyncio` para una alta concurrencia y eficiencia en operaciones de red y manejo de procesos.
+-   **Generación de Informes**: Crea automáticamente informes detallados en:
+    -   **JSON**: Archivos locales para archivo y análisis.
+    -   **Notion**: Páginas estructuradas y fáciles de leer en tu *workspace*.
+    -   **Supabase**: Registros en una base de datos PostgreSQL para persistencia a largo plazo.
+-   **Gestión de Keywords**: Mantiene un ciclo de vida para las palabras clave, con un catálogo maestro, una lista activa para investigar y un historial de ejecuciones.
+-   **Altamente Configurable**: Toda la configuración (API keys, selección de modelos de IA, rutas de archivos) se gestiona a través de un archivo `.env` para facilitar la portabilidad y seguridad.
+-   **Protocolo Estándar**: Utiliza el **Model Context Protocol (MCP)** para comunicarse con los servidores de cada plataforma, asegurando una interfaz estandarizada y desacoplada.
+
+### 🏛️ Arquitectura del Proyecto
+
+El sistema está diseñado con una arquitectura modular y desacoplada para facilitar su mantenimiento y extensión.
+
+-   `ai_trend_researcher.py`: El orquestador principal que ejecuta el flujo de investigación diario.
+-   `config_manager.py`: Centraliza la carga y validación de toda la configuración desde el archivo `.env`.
+-   `mcp_client_manager.py`: Gestiona el ciclo de vida (conexión, llamadas, cierre) de los clientes para los servidores MCP de cada plataforma.
+-   `platform_handlers.py`: Contiene la lógica específica para interactuar con cada plataforma (ej. `YouTubeHandler`, `GitHubHandler`), procesar sus datos y estandarizarlos.
+-   `data_processor.py`: Se encarga del análisis de datos, la extracción de keywords y la generación de recomendaciones utilizando tanto heurísticas como LLMs.
+-   `ai_client_manager.py`: Actúa como una fábrica para interactuar de forma unificada con diferentes proveedores de modelos de lenguaje (OpenAI, Gemini, etc.).
+-   `report_generator.py`: Genera los informes finales en todos los formatos soportados (JSON, Notion, Supabase).
+-   `keyword_manager.py`: Administra la base de datos de palabras clave en archivos JSON.
+-   `research_assistant.py`: Un script avanzado para realizar inmersiones profundas de investigación utilizando el servidor personalizado `research_hub`.
+
+### 🛠️ Instalación y Configuración
+
+Sigue estos pasos para poner en marcha el proyecto en tu entorno local.
+
+#### 1. Prerrequisitos
+
+-   **Python 3.9+**
+-   **Node.js y npm** (necesario para `npx`, que ejecuta los servidores MCP de la comunidad).
+-   **Git**
+-   (Opcional) **Compilador de Rust**, si deseas compilar el ejecutable de `research_hub` desde el código fuente.
+
+#### 2. Clonar el Repositorio
+
+```bash
+git clone https://github.com/tu_usuario/tu_repositorio.git
+cd tu_repositorio
+```
+
+#### 3. Instalar Dependencias de Python
+
+Crea un entorno virtual (recomendado) e instala las bibliotecas necesarias.
+
+```bash
+python -m venv venv
+source venv/bin/activate  # En Windows: venv\Scripts\activate
+pip install -r requirements.txt```
+
+#### 4. Configurar las Variables de Entorno
+
+Este es el paso más importante. El proyecto se controla mediante un archivo `.env`.
+
+1.  Copia el archivo de ejemplo:
+    ```bash
+    cp .env.example .env
+    ```
+2.  Edita el archivo `.env` con un editor de texto y rellena todas las claves de API y rutas necesarias.
+
+```env
+# .env.example
+
+# --- Claves de API (Obligatorias para las plataformas que uses) ---
+YOUTUBE_API_KEY=AIzaSy...
+GITHUB_PERSONAL_ACCESS_TOKEN=ghp_...
+NOTION_API_KEY=secret_...
+SUPABASE_ACCESS_TOKEN=eyJhbGciOi...
+SILICONFLOW_API_KEY= # Opcional, para el servidor de ArXiv
+
+# --- Configuración de Notion (Obligatoria si se usa Notion) ---
+NOTION_PARENT_PAGE_ID=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+
+# --- Configuración de Rutas del Sistema (¡IMPORTANTE!) ---
+# Modifica estas rutas para que apunten a directorios en tu máquina.
+RESEARCH_PAPERS_DIR="/home/user/documentos/research-papers"
+RESEARCH_HUB_EXECUTABLE="/home/user/proyectos/rust-research-mcp/target/release/rust-research-mcp"
+
+# --- Configuración del Proveedor de IA ---
+# Elige uno: "openai", "gemini", "groq", "anthropic", "ollama"
+AI_PROVIDER="openai"
+
+# Rellena la clave de API para el proveedor que hayas elegido.
+OPENAI_API_KEY="sk-..."
+GOOGLE_API_KEY="AIzaSy..."
+GROQ_API_KEY="gsk_..."
+ANTHROPIC_API_KEY="sk-ant-..."
+
+# --- (Opcional) Modelos Específicos de IA ---
+# Si se dejan en blanco, se usarán los modelos por defecto.
+AI_MODEL_OPENAI="gpt-4o"
+AI_MODEL_GEMINI="gemini-1.5-flash"
+AI_MODEL_GROQ="llama3-70b-8192"
+AI_MODEL_ANTHROPIC="claude-3-haiku-20240307"
+AI_MODEL_OLLAMA="llama3"
+```
+
+#### 5. Configurar la Base de Datos (Supabase)
+
+Si planeas usar la integración con Supabase, asegúrate de que tu tabla en la base de datos coincida con el esquema definido en `supabase_schema.sql`. Puedes ejecutar ese script en el editor SQL de tu proyecto de Supabase.
+
+### ▶️ Uso
+
+Una vez configurado, puedes ejecutar los dos flujos de trabajo principales.
+
+#### Investigación Diaria de Tendencias
+
+Este es el flujo principal. Ejecutará la investigación en todas las plataformas habilitadas, analizará los datos y generará los informes.
+
+```bash
+python ai_trend_researcher.py
+```
+
+El script imprimirá su progreso en la consola. Al finalizar, encontrarás el informe JSON en el directorio `reports/` y, si está configurado, una nueva página en Notion y un nuevo registro en tu tabla de Supabase.
+
+#### Inmersión Profunda de Investigación
+
+Este script utiliza el servidor `research_hub` para realizar búsquedas avanzadas de *papers*, descargarlos, analizarlos y generar bibliografías.
+
+1.  Asegúrate de que el ejecutable `research_hub` esté correctamente configurado en tu `.env`.
+2.  (Opcional) Añade términos de búsqueda al archivo `terminos.txt`.
+
+```bash
+python research_assistant.py
+```
+
+Los resultados de esta ejecución (CSVs, JSONs, archivos BibTeX y logs) se guardarán en subdirectorios dentro de `salidas/` para mantener cada ejecución organizada.
+
+### 🤝 Contribuciones
+
+Las contribuciones son bienvenidas. Si tienes ideas para mejorar el proyecto, nuevas plataformas para integrar o encuentras algún error, por favor abre un *issue* o envía un *pull request*.
+
+### 📄 Licencia
+
+Este proyecto está bajo la Licencia MIT. Consulta el archivo `LICENSE` para más detalles.
+
+---
+
+<a name="-català"></a>
+## CAT Català
+
+<details>
+<summary><strong>Taula de Continguts</strong></summary>
+
+- [🚀 Característiques Principals](#-característiques-principals)
+- [🏛️ Arquitectura del Projecte](#️-arquitectura-del-projecte)
+- [🛠️ Instal·lació i Configuració](#️-installació-i-configuració)
+  - [1. Prerequisits](#1-prerequisits)
+  - [2. Clonar el Repositori](#2-clonar-el-repositori)
+  - [3. Instal·lar Dependències de Python](#3-installar-dependències-de-python)
+  - [4. Configurar les Variables d'Entorn](#4-configurar-les-variables-dentorn)
+  - [5. Configurar la Base de Dades (Supabase)](#5-configurar-la-base-de-dades-supabase)
+- [▶️ Ús](#️-ús)
+  - [Recerca Diària de Tendències](#recerca-diària-de-tendències)
+  - [Recerca d'Immersió Profunda](#recerca-dimmersió-profunda)
+- [🤝 Contribucions](#-contribucions)
+- [📄 Llicència](#-llicència)
+
+</details>
+
+Un sistema automatitzat i modular per a la investigació de tendències en Intel·ligència Artificial. Recopila i processa dades de múltiples plataformes (GitHub, YouTube, ArXiv, etc.), utilitza models de llenguatge (LLMs) per extreure *insights*, descobrir noves paraules clau i genera informes complets en múltiples formats (JSON, Notion, Supabase).
+
+**Nota:** Aquest projecte ha estat desenvolupat modificant el projecte [EmpowerHerDev/ai-trend-research-system](https://github.com/EmpowerHerDev/ai-trend-research-system) i integrant el servidor de recerca personalitzat de [Ladvien/research_hub_mcp](https://github.com/Ladvien/research_hub_mcp). El resultat és un sistema flexible i modular que ara és compatible amb múltiples proveïdors de models de llenguatge grans (LLM), incloent-hi **OpenAI (GPT), Google (Gemini), Anthropic (Claude), Groq i Ollama**. Aquest treball també forma part d'un procés d'aprenentatge personal en el camp del desenvolupament d'agents d'intel·ligència artificial.
+
+### 🚀 Característiques Principals
+
+-   **Recerca Multiplataforma**: Recopila dades de YouTube, GitHub, cerques web, ArXiv, HackerNews i un motor de recerca de *papers* personalitzat.
+-   **Processament amb IA**: Utilitza LLMs (OpenAI, Gemini, Groq, Anthropic, Ollama) per a tasques avançades com:
+    -   Extracció intel·ligent de noves paraules clau.
+    -   Generació de recomanacions dinàmiques i contextuals.
+    -   Traducció de termes de cerca per a consultes multilingües.
+-   **Arquitectura Asíncrona**: Construït amb `asyncio` per a una alta concurrència i eficiència en operacions de xarxa i gestió de processos.
+-   **Generació d'Informes**: Crea automàticament informes detallats en:
+    -   **JSON**: Fitxers locals per a arxiu i anàlisi.
+    -   **Notion**: Pàgines estructurades i fàcils de llegir al teu *workspace*.
+    -   **Supabase**: Registres en una base de dades PostgreSQL per a persistència a llarg termini.
+-   **Gestió de Keywords**: Manté un cicle de vida per a les paraules clau, amb un catàleg mestre, una llista activa per investigar i un historial d'execucions.
+-   **Altament Configurable**: Tota la configuració (claus d'API, selecció de models d'IA, rutes de fitxers) es gestiona mitjançant un fitxer `.env` per facilitar la portabilitat i seguretat.
+-   **Protocol Estàndard**: Utilitza el **Model Context Protocol (MCP)** per comunicar-se amb els servidors de cada plataforma, assegurant una interfície estandarditzada i desacoblada.
+
+### 🏛️ Arquitectura del Projecte
+
+El sistema està dissenyat amb una arquitectura modular i desacoblada per facilitar el seu manteniment i extensió.
+
+-   `ai_trend_researcher.py`: L'orquestrador principal que executa el flux de recerca diari.
+-   `config_manager.py`: Centralitza la càrrega i validació de tota la configuració des del fitxer `.env`.
+-   `mcp_client_manager.py`: Gestiona el cicle de vida (connexió, trucades, tancament) dels clients per als servidors MCP de cada plataforma.
+-   `platform_handlers.py`: Conté la lògica específica per interactuar amb cada plataforma (ex. `YouTubeHandler`, `GitHubHandler`), processar les seves dades i estandarditzar-les.
+-   `data_processor.py`: S'encarrega de l'anàlisi de dades, l'extracció de paraules clau i la generació de recomanacions utilitzant tant heurístiques com LLMs.
+-   `ai_client_manager.py`: Actua com una fàbrica per interactuar de manera unificada amb diferents proveïdors de models de llenguatge (OpenAI, Gemini, etc.).
+-   `report_generator.py`: Genera els informes finals en tots els formats suportats (JSON, Notion, Supabase).
+-   `keyword_manager.py`: Administra la base de dades de paraules clau en fitxers JSON.
+-   `research_assistant.py`: Un script avançat per realitzar immersions profundes de recerca utilitzant el servidor personalitzat `research_hub`.
+
+### 🛠️ Instal·lació i Configuració
+
+Segueix aquests passos per posar en marxa el projecte al teu entorn local.
+
+#### 1. Prerequisits
+
+-   **Python 3.9+**
+-   **Node.js i npm** (necessari per a `npx`, que executa els servidors MCP de la comunitat).
+-   **Git**
+-   (Opcional) **Compilador de Rust**, si vols compilar l'executable de `research_hub` des del codi font.
+
+#### 2. Clonar el Repositori
+
+```bash
+git clone https://github.com/el_teu_usuari/el_teu_repositori.git
+cd el_teu_repositori
+```
+
+#### 3. Instal·lar Dependències de Python
+
+Crea un entorn virtual (recomanat) i instal·la les llibreries necessàries.
+
+```bash
+python -m venv venv
+source venv/bin/activate  # A Windows: venv\Scripts\activate
+pip install -r requirements.txt
+```
+
+#### 4. Configurar les Variables d'Entorn
+
+Aquest és el pas més important. El projecte es controla mitjançant un fitxer `.env`.
+
+1.  Copia el fitxer d'exemple:
+    ```bash
+    cp .env.example .env
+    ```
+2.  Edita el fitxer `.env` amb un editor de text i omple totes les claus d'API i rutes necessàries.
+
+```env
+# .env.example
+
+# --- Claus d'API (Obligatòries per a les plataformes que facis servir) ---
+YOUTUBE_API_KEY=AIzaSy...
+GITHUB_PERSONAL_ACCESS_TOKEN=ghp_...
+NOTION_API_KEY=secret_...
+SUPABASE_ACCESS_TOKEN=eyJhbGciOi...
+SILICONFLOW_API_KEY= # Opcional, per al servidor d'ArXiv
+
+# --- Configuració de Notion (Obligatòria si s'usa Notion) ---
+NOTION_PARENT_PAGE_ID=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+
+# --- Configuració de Rutes del Sistema (IMPORTANT!) ---
+# Modifica aquestes rutes perquè apuntin a directoris a la teva màquina.
+RESEARCH_PAPERS_DIR="/home/user/documents/research-papers"
+RESEARCH_HUB_EXECUTABLE="/home/user/projectes/rust-research-mcp/target/release/rust-research-mcp"
+
+# --- Configuració del Proveïdor d'IA ---
+# Tria'n un: "openai", "gemini", "groq", "anthropic", "ollama"
+AI_PROVIDER="openai"
+
+# Omple la clau d'API per al proveïdor que hagis triat.
+OPENAI_API_KEY="sk-..."
+GOOGLE_API_KEY="AIzaSy..."
+GROQ_API_KEY="gsk_..."
+ANTHROPIC_API_KEY="sk-ant-..."
+
+# --- (Opcional) Models Específics d'IA ---
+# Si es deixen en blanc, s'utilitzaran els models per defecte.
+AI_MODEL_OPENAI="gpt-4o"
+AI_MODEL_GEMINI="gemini-1.5-flash"
+AI_MODEL_GROQ="llama3-70b-8192"
+AI_MODEL_ANTHROPIC="claude-3-haiku-20240307"
+AI_MODEL_OLLAMA="llama3"
+```
+
+#### 5. Configurar la Base de Dades (Supabase)
+
+Si planeges fer servir la integració amb Supabase, assegura't que la teva taula a la base de dades coincideixi amb l'esquema definit a `supabase_schema.sql`. Pots executar aquest script a l'editor SQL del teu projecte de Supabase.
+
+### ▶️ Ús
+
+Un cop configurat, pots executar els dos fluxos de treball principals.
+
+#### Recerca Diària de Tendències
+
+Aquest és el flux principal. Executarà la recerca a totes les plataformes habilitades, analitzarà les dades i generarà els informes.
+
+```bash
+python ai_trend_researcher.py
+```
+
+L'script imprimirà el seu progrés a la consola. En finalitzar, trobaràs l'informe JSON al directori `reports/` i, si està configurat, una nova pàgina a Notion i un nou registre a la teva taula de Supabase.
+
+#### Recerca d'Immersió Profunda
+
+Aquest script utilitza el servidor `research_hub` per realitzar cerques avançades de *papers*, descarregar-los, analitzar-los i generar bibliografies.
+
+1.  Assegura't que l'executable `research_hub` estigui correctament configurat al teu `.env`.
+2.  (Opcional) Afegeix termes de cerca al fitxer `terminos.txt`.
+
+```bash
+python research_assistant.py```
+
+Els resultats d'aquesta execució (CSVs, JSONs, fitxers BibTeX i logs) es desaran en subdirectoris dins de `salidas/` per mantenir cada execució organitzada.
+
+### 🤝 Contribucions
+
+Les contribucions són benvingudes. Si tens idees per millorar el projecte, noves plataformes per integrar o trobes algun error, si us plau obre un *issue* o envia un *pull request*.
+
+### 📄 Llicència
+
+Aquest projecte està sota la Llicència MIT. Consulta el fitxer `LICENSE` per a més detalls.
+
+
+
+---
+File: /report_generator.py
+---
+
+# report_generator.py
+
+# Importa el módulo 'json' para trabajar con datos JSON.
+import json
+# Importa el módulo 'os' para interactuar con el sistema de archivos (crear directorios y archivos).
+import os
+# Importa 'datetime' para obtener la fecha y hora actuales.
+from datetime import datetime
+# Importa herramientas de 'typing' para anotaciones de tipo.
+from typing import Dict, List, Any, Optional
+# Importa la clase 'RemoteMCPClient' para interactuar con los servidores de Notion y Supabase.
+from mcp_client_manager import RemoteMCPClient
+
+
+class JSONReportGenerator:
+    """Genera informes de la investigación en formato de archivo JSON."""
+    
+    def __init__(self, reports_dir: str = "reports"):
+        """Constructor. Define el directorio donde se guardarán los informes."""
+        self.reports_dir = reports_dir
+    
+    def generate_report(self, research_data: List[Dict], new_keywords: List[str], 
+                       summary: Dict[str, Any], recommendations: List[str]) -> str:
+        """Crea un archivo JSON con todos los datos de la investigación."""
+        today = datetime.now().strftime("%Y-%m-%d")
+        # Define la estructura del informe.
+        report = {
+            "date": today,
+            "summary": summary,
+            "new_keywords": new_keywords,
+            "recommendations": recommendations,
+            "detailed_results": research_data
+        }
+        
+        # Construye la ruta completa del archivo.
+        report_file = os.path.join(self.reports_dir, f"ai_trends_{today}.json")
+        # Asegura que el directorio de informes exista.
+        os.makedirs(self.reports_dir, exist_ok=True)
+        
+        # Abre el archivo en modo escritura y vuelca el diccionario del informe como JSON.
+        with open(report_file, 'w', encoding='utf-8') as f:
+            json.dump(report, f, ensure_ascii=False, indent=2) # indent=2 para formato legible.
+        
+        return report_file # Devuelve la ruta del archivo creado.
+
+
+class NotionReportGenerator:
+    """Genera informes como una nueva página en Notion."""
+    
+    def __init__(self, notion_client: Optional[RemoteMCPClient], parent_page_id: str):
+        """Constructor. Necesita el cliente MCP de Notion y el ID de la página padre."""
+        self.notion_client = notion_client
+        self.parent_page_id = parent_page_id
+    
+    async def create_notion_report(self, report: Dict) -> Any:
+        """Crea una página en Notion con el contenido del informe."""
+        # Si no hay cliente o ID de página, no se puede crear el informe.
+        if not self.notion_client or not self.parent_page_id:
+            print("Aviso: Cliente de Notion o ID de página padre no disponible. Omitiendo informe de Notion.")
+            return None
+        
+        try:
+            today = report.get("date", datetime.now().strftime("%Y-%m-%d"))
+            page_title = f"Informe de Tendencias IA - {today}"
+            
+            print("  - Creando bloques de contenido para Notion...")
+            blocks = self._create_notion_blocks(report)
+            
+            # Valida la estructura de los bloques antes de enviarlos a la API de Notion.
+            if not self._validate_blocks_structure(blocks):
+                print("Error: La estructura de los bloques de Notion generados es inválida. Omitiendo informe.")
+                return None
+            
+            # Llama a la herramienta 'create-page' del servidor MCP de Notion.
+            response = await self.notion_client.call_tool(
+                "create-page",
+                {
+                    "parent_type": "page_id",
+                    "parent_id": self.parent_page_id,
+                    # Las propiedades (como el título) deben ser un string JSON.
+                    "properties": json.dumps({
+                        "title": {"title": [{"text": {"content": page_title}}]}
+                    }),
+                    # El contenido (los bloques) también debe ser un string JSON.
+                    "children": json.dumps(blocks)
+                }
+            )
+            
+            print(f"  ✓ Informe de Notion creado: '{page_title}'")
+            return response
+            
+        except Exception as e:
+            print(f"  ✗ Error al crear el informe de Notion: {e}")
+            return None
+    
+    def _validate_blocks_structure(self, blocks: List[Dict]) -> bool:
+        """Valida que la estructura básica de los bloques sea correcta para la API de Notion."""
+        if not isinstance(blocks, list): return False
+        for block in blocks:
+            if not isinstance(block, dict): return False
+            if "object" not in block or block["object"] != "block": return False
+            if "type" not in block: return False
+            block_type = block["type"]
+            if block_type not in block: return False
+        return True
+    
+    def _create_rich_text(self, text: str) -> List[Dict]:
+        """Función de utilidad para crear un objeto 'rich_text' de Notion."""
+        return [{"type": "text", "text": {"content": text}}]
+
+    def _create_notion_blocks(self, report: Dict) -> List[Dict]:
+        """Crea una lista detallada de bloques de contenido de Notion a partir de los datos del informe."""
+        blocks = []
+        
+        # --- Resumen ---
+        blocks.append({"object": "block", "type": "heading_2", "heading_2": {"rich_text": self._create_rich_text("📊 Resumen")}})
+        summary = report.get("summary", {})
+        summary_text = (
+            f"• Resultados Totales: {summary.get('total_items', 0)}\n"
+            f"• Nuevas Keywords: {summary.get('new_keywords_count', 0)}\n"
+            f"• Ejecuciones con Errores: {summary.get('runs_with_errors', 0)}"
+        )
+        blocks.append({"object": "block", "type": "paragraph", "paragraph": {"rich_text": self._create_rich_text(summary_text)}})
+        
+        # --- Recomendaciones ---
+        blocks.append({"object": "block", "type": "heading_2", "heading_2": {"rich_text": self._create_rich_text("📋 Recomendaciones")}})
+        recommendations = report.get("recommendations", [])
+        if recommendations:
+            for rec in recommendations:
+                if rec and isinstance(rec, str) and rec.strip():
+                    blocks.append({"object": "block", "type": "bulleted_list_item", "bulleted_list_item": {"rich_text": self._create_rich_text(rec.strip())}})
+        else:
+            blocks.append({"object": "block", "type": "paragraph", "paragraph": {"rich_text": self._create_rich_text("No se generaron recomendaciones.")}})
+        
+        # --- Nuevas Keywords ---
+        blocks.append({"object": "block", "type": "heading_2", "heading_2": {"rich_text": self._create_rich_text("🔍 Nuevas Keywords Descubiertas")}})
+        new_keywords = report.get("new_keywords", [])
+        if new_keywords:
+            blocks.append({"object": "block", "type": "paragraph", "paragraph": {"rich_text": self._create_rich_text(", ".join(new_keywords))}})
+        else:
+            blocks.append({"object": "block", "type": "paragraph", "paragraph": {"rich_text": self._create_rich_text("No se encontraron nuevas keywords.")}})
+
+        # --- Resultados Detallados ---
+        blocks.append({"object": "block", "type": "heading_2", "heading_2": {"rich_text": self._create_rich_text("🔬 Resultados Detallados por Plataforma")}})
+        platform_results = self._group_results_by_platform(report.get("detailed_results", []))
+        
+        for platform, results in platform_results.items():
+            if not results: continue
+            blocks.append({"object": "block", "type": "heading_3", "heading_3": {"rich_text": self._create_rich_text(f" प्लेटफॉर्म: {platform.upper()}")}})
+            for i, result in enumerate(results[:3], 1): # Limita a los 3 primeros resultados para ser conciso.
+                title = str(result.get('title', result.get('name', 'Sin título'))).strip()
+                url = result.get('url', '')
+                snippet = (result.get('description', result.get('snippet', '')) or "")[:250].strip()
+                
+                if not title: continue
+                
+                toggle_block = {
+                    "object": "block",
+                    "type": "toggle",
+                    "toggle": {
+                        "rich_text": self._create_rich_text(f"{i}. {title}"),
+                        "children": []
+                    }
+                }
+                
+                if url:
+                    toggle_block["toggle"]["children"].append({"object": "block", "type": "paragraph", "paragraph": {"rich_text": self._create_rich_text(f"🔗 URL: {url}")}})
+                if snippet:
+                     toggle_block["toggle"]["children"].append({"object": "block", "type": "paragraph", "paragraph": {"rich_text": self._create_rich_text(f"📝 Extracto: {snippet}...")}})
+                
+                blocks.append(toggle_block)
+        
+        return blocks
+    
+    def _group_results_by_platform(self, detailed_results: List[Dict]) -> Dict[str, List[Dict]]:
+        """Agrupa una lista de resultados en un diccionario por plataforma."""
+        platform_results = {}
+        for data in detailed_results:
+            platform = data.get("platform", "unknown")
+            if not data.get("error") and data.get("results"):
+                if platform not in platform_results:
+                    platform_results[platform] = []
+                platform_results[platform].extend(data["results"])
+        return platform_results
+
+
+class SupabaseReportGenerator:
+    """Genera informes guardando los datos en una tabla de Supabase."""
+    
+    def __init__(self, supabase_client: Optional[RemoteMCPClient]):
+        """Constructor. Necesita el cliente MCP de Supabase."""
+        self.supabase_client = supabase_client
+    
+    async def create_supabase_report(self, report: Dict) -> Any:
+        """Inserta los datos del informe en una tabla de la base de datos Supabase."""
+        if not self.supabase_client:
+            print("Aviso: Cliente de Supabase no disponible. Omitiendo informe de Supabase.")
+            return None
+        
+        try:
+            today = report.get("date", datetime.now().strftime("%Y-%m-%d"))
+            
+            # Define la consulta SQL para insertar los datos.
+            # ADVERTENCIA: Este método formatea una cadena SQL. Es seguro en este contexto
+            # porque los datos son generados por la propia aplicación, pero para datos
+            # externos, se deben usar consultas parametrizadas si el servidor MCP las soporta.
+            sql = """
+            INSERT INTO ai_trend_reports (date, summary, detailed_results, new_keywords, recommendations)
+            VALUES ('{date}', '{summary}', '{detailed_results}', '{new_keywords}', '{recommendations}')
+            RETURNING id;
+            """
+            
+            # Prepara los parámetros, convirtiendo los diccionarios/listas a strings JSON
+            # y escapando comillas simples para evitar errores de sintaxis SQL.
+            params = {
+                "date": today,
+                "summary": json.dumps(report.get("summary", {}), ensure_ascii=False).replace("'", "''"),
+                "detailed_results": json.dumps(report.get("detailed_results", []), ensure_ascii=False).replace("'", "''"),
+                "new_keywords": json.dumps(report.get("new_keywords", []), ensure_ascii=False).replace("'", "''"),
+                "recommendations": json.dumps(report.get("recommendations", []), ensure_ascii=False).replace("'", "''"),
+            }
+            # Formatea la consulta SQL con los parámetros.
+            query = sql.format(**params)
+
+            # Llama a la herramienta 'execute_sql' del servidor MCP de Supabase.
+            response = await self.supabase_client.call_tool("execute_sql", {"query": query})
+            
+            print(f"  ✓ Informe de Supabase creado para la fecha: {today}")
+            return response
+            
+        except Exception as e:
+            print(f"  ✗ Error al crear el informe de Supabase: {e}")
+            return None
+
+
+class ReportManager:
+    """Clase de alto nivel que gestiona la generación de todos los tipos de informes."""
+    
+    def __init__(self, reports_dir: str = "reports", notion_client: Optional[RemoteMCPClient] = None, 
+                 notion_parent_id: Optional[str] = None, supabase_client: Optional[RemoteMCPClient] = None):
+        """Constructor. Inicializa todos los generadores de informes necesarios."""
+        self.json_generator = JSONReportGenerator(reports_dir)
+        self.notion_generator = NotionReportGenerator(notion_client, notion_parent_id)
+        self.supabase_generator = SupabaseReportGenerator(supabase_client)
+    
+    async def generate_all_reports(self, research_data: List[Dict], new_keywords: List[str],
+                                 summary: Dict[str, Any], recommendations: List[str]) -> str:
+        """Orquesta la generación de informes en JSON, Notion y Supabase."""
+        # Primero, siempre genera el informe JSON local.
+        report_file = self.json_generator.generate_report(
+            research_data, new_keywords, summary, recommendations
+        )
+        
+        # Prepara un diccionario unificado con los datos del informe.
+        report_data = {
+            "date": datetime.now().strftime("%Y-%m-%d"),
+            "summary": summary,
+            "detailed_results": research_data,
+            "new_keywords": new_keywords,
+            "recommendations": recommendations
+        }
+        
+        # Genera los informes de Notion y Supabase en paralelo si están disponibles.
+        tasks = []
+        if self.notion_generator:
+            tasks.append(self.notion_generator.create_notion_report(report_data))
+        if self.supabase_generator:
+            tasks.append(self.supabase_generator.create_supabase_report(report_data))
+            
+        if tasks:
+            await asyncio.gather(*tasks)
+        
+        return report_file # Devuelve la ruta del archivo JSON como confirmación.
+
+
+
+---
+File: /requirement.txt
+---
+
+# Biblioteca oficial para interactuar con los modelos de IA de Anthropic (Claude).
+anthropic
+
+# Biblioteca para el protocolo MCP (Model Context Protocol), que estandariza la comunicación con herramientas externas.
+mcp
+
+# Biblioteca estándar en Python para realizar peticiones HTTP a APIs y servicios web.
+requests
+
+# Biblioteca para cargar las variables de entorno definidas en el archivo .env en el script de Python.
+python-dotenv
+
+# --- Bibliotecas de IA añadidas ---
+
+# Biblioteca oficial de Google para interactuar con los modelos de IA Gemini.
+google-generativeai
+
+# Biblioteca oficial para interactuar con la API de Groq, que ofrece inferencia rápida de LLMs.
+groq
+
+# Biblioteca para interactuar con Ollama, que permite ejecutar modelos de IA localmente.
+ollama
+
+# Biblioteca oficial para interactuar con los modelos de IA de OpenAI (GPT).
+openai
+
+
+
+---
+File: /requirements.txt
+---
+
+# Biblioteca oficial para interactuar con los modelos de IA de Anthropic (Claude).
+anthropic
+
+# Biblioteca para el protocolo MCP (Model Context Protocol), que estandariza la comunicación con herramientas externas.
+mcp
+
+# Biblioteca estándar en Python para realizar peticiones HTTP a APIs y servicios web.
+requests
+
+# Biblioteca para cargar las variables de entorno definidas en el archivo .env en el script de Python.
+python-dotenv
+
+# --- Bibliotecas de IA añadidas ---
+
+# Biblioteca oficial de Google para interactuar con los modelos de IA Gemini.
+google-generativeai
+
+# Biblioteca oficial para interactuar con la API de Groq, que ofrece inferencia rápida de LLMs.
+groq
+
+# Biblioteca para interactuar con Ollama, que permite ejecutar modelos de IA localmente.
+ollama
+
+# Biblioteca oficial para interactuar con los modelos de IA de OpenAI (GPT).
+openai
+
+
+
+---
+File: /research_assistant_con_hackers_LLM.py
+---
+
+# research_assistant_con_hackers_LLM.py
+# ============================================================
+# Flujo de investigación con rust-research-mcp (MCP server)
+# 1. Lee 'terminos.txt' y construye topics (MAX_TOPICS).
+# 2. Busca papers (search_papers) para DOIs y metadatos.
+# 3. Descarga PDFs (download_paper) con control de paralelismo.
+# 4. Genera bibliografía (BibTeX) desde los metadatos recolectados.
+# 5. Busca discusiones en Hacker News por cada topic y filtra con un LLM.
+# ============================================================
+
+from __future__ import annotations
+import asyncio
+import json
+import os
+import re
+from datetime import datetime
+from typing import Any, Iterable, List, Dict, Optional
+
+from dotenv import load_dotenv
+import aiofiles
+import aiofiles.os
+
+# Módulos del proyecto
+from config_manager import ServerConfig, AppConfig
+from mcp_client_manager import MCPClientManager, RemoteMCPClient
+from ai_client_manager import AIClientManager
+
+load_dotenv()
+
+# ============================================================
+# 🔧 PARÁMETROS CONFIGURABLES (env-first)
+# ============================================================
+
+def env_bool(name: str, default: bool) -> bool:
+    val = os.getenv(name, str(default)).strip().lower()
+    return val in ("1", "true", "t", "yes", "y", "on")
+
+def env_int(name: str, default: int) -> int:
+    try:
+        v = os.getenv(name)
+        return int(v) if v is not None else default
+    except ValueError:
+        return default
+
+# ——— Control de salidas ———
+SEPARATE_RUNS_IN_SUBFOLDER: bool = env_bool("SEPARATE_RUNS_IN_SUBFOLDER", True)
+RUN_TAG: Optional[str] = os.getenv("RUN_TAG")
+
+# ——— Búsqueda y filtrado ———
+MAX_TOPICS: int = env_int("MAX_TOPICS", 10)
+MAX_RESULTS_PER_TOPIC: int = env_int("MAX_RESULTS_PER_TOPIC", 10)
+MAX_HN_RESULTS_PER_TOPIC: int = env_int("MAX_HN_RESULTS_PER_TOPIC", 15)
+
+
+# ——— Descarga de PDFs ———
+DOWNLOAD_ALL_PAPERS: bool = env_bool("DOWNLOAD_ALL_PAPERS", False)
+SELECT_TOP_K: int = env_int("SELECT_TOP_K", 5)
+MAX_PARALLEL_DOWNLOADS: int = env_int("MAX_PARALLEL_DOWNLOADS", 4)
+
+# ——— Timeouts/reintentos MCP ———
+MCP_INIT_RETRIES: int = env_int("MCP_INIT_RETRIES", 1)
+RESEARCH_HUB_INIT_TIMEOUT: int = env_int("RESEARCH_HUB_INIT_TIMEOUT", 45)
+HACKERNEWS_INIT_TIMEOUT: int = env_int("HACKERNEWS_INIT_TIMEOUT", 15)
+
+# ============================================================
+# Constantes y Utilidades
+# ============================================================
+DOI_REGEX = re.compile(r'^10\.\d{4,9}/.+$')
+
+def slugify(s: str) -> str:
+    """Convierte un string en un formato seguro para nombres de archivo."""
+    s = str(s).lower().strip()
+    s = re.sub(r'[\s\W-]+', '-', s)
+    s = s.strip('-')
+    return s[:75] if len(s) > 75 else s
+
+def now_str() -> str:
+    """Devuelve la fecha y hora actual como un string formateado."""
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+def extract_text(blobs: Optional[Iterable[Any]]) -> str:
+    """Extrae y une el contenido de texto de una respuesta MCP."""
+    if not blobs: 
+        return ""
+    parts: List[str] = []
+    for b in blobs:
+        if hasattr(b, "text"):
+            parts.append(getattr(b, "text", "") or "")
+        elif isinstance(b, str):
+            parts.append(b)
+    return "\n".join(parts).strip()
+
+def parse_text_response_to_papers(raw_text: str, topic: str) -> List[Dict[str, Any]]:
+    """Parsea la respuesta de texto del servidor Rust para la búsqueda de papers."""
+    papers = []
+    if not raw_text:
+        return papers
+
+    content = raw_text.split('\n\n', 1)[-1]
+    paper_blocks = re.split(r'\n\n(?=\d+\.\s)', content)
+
+    for block in paper_blocks:
+        if not block.strip():
+            continue
+        paper_data = {"topic": topic, "title": None, "doi": None, "source": None, "year": None, "authors": None, "journal": None}
+        
+        # Extracción de campos con expresiones regulares
+        title_match = re.search(r'^\d+\.\s*(.*?)\s*\(Relevance:', block)
+        if title_match: paper_data['title'] = title_match.group(1).strip()
+        
+        doi_match = re.search(r'📖\s*DOI:\s*(.*)', block)
+        if doi_match:
+            doi_str = doi_match.group(1).strip()
+            paper_data['doi'] = doi_str if doi_str and " " not in doi_str else None
+
+        source_match = re.search(r'🔍\s*Source:\s*(.*)', block)
+        if source_match: paper_data['source'] = source_match.group(1).strip()
+            
+        year_match = re.search(r'📅\s*Year:\s*(\d{4})', block)
+        if year_match: paper_data['year'] = int(year_match.group(1).strip())
+
+        authors_match = re.search(r'👤\s*Authors:\s*(.*)', block)
+        if authors_match: paper_data['authors'] = authors_match.group(1).strip()
+
+        journal_match = re.search(r'Journal:\s*(.*)', block)
+        if journal_match: paper_data['journal'] = journal_match.group(1).strip()
+            
+        if paper_data.get('title'):
+            paper_data['url'] = f"https://doi.org/{paper_data['doi']}" if paper_data.get('doi') else None
+            paper_data['is_valid_doi'] = bool(paper_data['doi'] and DOI_REGEX.match(paper_data['doi']))
+            papers.append(paper_data)
+            
+    return papers
+
+class AdvancedResearchAssistant:
+    """Orquesta el flujo de investigación avanzada, gestionando clientes, archivos y lógica de negocio."""
+    
+    def __init__(self, topics: List[str]):
+        """Inicializa el asistente con los temas de investigación."""
+        self.topics = topics
+        self.mcp_manager: MCPClientManager = None
+        self.ai_client: Optional[AIClientManager] = None
+        self.rh_client: Optional[RemoteMCPClient] = None
+        self.hn_client: Optional[RemoteMCPClient] = None
+
+        # Directorios de salida (inicializados como None)
+        self.salidas_dir = self.csv_dir = self.logs_dir = self.bib_dir = self.json_dir = None
+        self.downloads_dir = os.getenv("RESEARCH_PAPERS_DIR", os.path.join(os.getcwd(), "ResearchPapers"))
+
+    async def setup_output_dirs(self):
+        """Configura los directorios de salida para esta ejecución."""
+        base = "salidas"
+        if SEPARATE_RUNS_IN_SUBFOLDER:
+            tag = RUN_TAG or datetime.now().strftime("%Y%m%d_%H%M%S")
+            base = os.path.join(base, tag)
+        
+        self.salidas_dir = base
+        self.csv_dir = os.path.join(base, "csv")
+        self.logs_dir = os.path.join(base, "logs")
+        self.bib_dir = os.path.join(base, "bib")
+        self.json_dir = os.path.join(base, "json")
+        
+        for d in (self.salidas_dir, self.csv_dir, self.logs_dir, self.bib_dir, self.json_dir, self.downloads_dir):
+            await aiofiles.os.makedirs(d, exist_ok=True)
+        print(f"📂 Salidas se guardarán en: {self.salidas_dir}")
+        print(f"📥 PDFs se guardarán en: {self.downloads_dir}")
+
+    async def _save_json(self, name: str, data: Any):
+        """Guarda datos en un archivo JSON en el directorio de salida."""
+        path = os.path.join(self.json_dir, name)
+        async with aiofiles.open(path, "w", encoding="utf-8") as f:
+            await f.write(json.dumps(data, ensure_ascii=False, indent=2))
+        print(f"💾 JSON guardado: {os.path.basename(path)}")
+    
+    async def _save_csv(self, name: str, rows: List[Dict[str, Any]]):
+        """Guarda una lista de diccionarios en un archivo CSV."""
+        if not rows: return
+        path = os.path.join(self.csv_dir, name)
+        async with aiofiles.open(path, "w", encoding="utf-8-sig", newline="") as f:
+            fields = list(rows[0].keys())
+            await f.write(",".join(fields) + "\n")
+            for row in rows:
+                values = [f"\"{str(row.get(k, '')).replace('\"', '\"\"')}\"" for k in fields]
+                await f.write(",".join(values) + "\n")
+        print(f"💾 CSV guardado: {os.path.basename(path)} ({len(rows)} filas)")
+
+    async def _save_bib(self, name: str, content: str):
+        """Guarda contenido en un archivo BibTeX."""
+        path = os.path.join(self.bib_dir, name)
+        async with aiofiles.open(path, "w", encoding="utf-8") as f:
+            await f.write(content)
+        print(f"📚 Bibliografía guardada: {os.path.basename(path)}")
+
+    async def _save_log(self, name: str, content: str):
+        """Guarda texto en un archivo de registro."""
+        path = os.path.join(self.logs_dir, name)
+        async with aiofiles.open(path, "w", encoding="utf-8") as f:
+            await f.write(content)
+        print(f"📜 Log de error guardado: {os.path.basename(path)}")
+
+    async def _connect_with_retries(self, name: str, cfg: Dict[str, Any], timeout: int, retries: int) -> bool:
+        """Intenta conectar a un servidor MCP con reintentos."""
+        delay = 2.0
+        for attempt in range(retries + 1):
+            try:
+                print(f"[{now_str()}] [MCP] Conectando a '{name}' (intento {attempt+1}/{retries+1}) | timeout={timeout}s")
+                await asyncio.wait_for(self.mcp_manager._connect_single_server(name, cfg), timeout=timeout)
+                if self.mcp_manager.is_platform_available(name):
+                    print(f"  [ÉXITO] Conexión establecida con '{name}'")
+                    return True
+            except Exception as e:
+                err = f"Timeout en initialize() para '{name}'" if isinstance(e, asyncio.TimeoutError) else str(e)
+            print(f"  [FALLO] Error conectando a '{name}': {err}")
+            if attempt < retries:
+                await asyncio.sleep(delay)
+                delay *= 2
+        print(f"  [FALLO] Conexión definitiva fallida con '{name}'")
+        return False
+
+    async def connect_services(self) -> bool:
+        """Inicializa y conecta a todos los servicios externos (MCP, IA)."""
+        # 1. Conectar servidores MCP
+        server_configs = ServerConfig.get_server_configs()
+        self.mcp_manager = MCPClientManager(server_configs)
+        
+        print("\n🔗 Conectando a servidores MCP…")
+        rh_cfg = server_configs.get("research_hub", {})
+        hn_cfg = server_configs.get("hackernews", {})
+
+        rh_ok, hn_ok = await asyncio.gather(
+            self._connect_with_retries("research_hub", rh_cfg, RESEARCH_HUB_INIT_TIMEOUT, MCP_INIT_RETRIES),
+            self._connect_with_retries("hackernews", hn_cfg, HACKERNEWS_INIT_TIMEOUT, MCP_INIT_RETRIES),
+        )
+        self.rh_client = self.mcp_manager.get_client("research_hub") if rh_ok else None
+        self.hn_client = self.mcp_manager.get_client("hackernews") if hn_ok else None
+
+        # 2. Inicializar cliente de IA
+        try:
+            ai_provider = AppConfig.get_ai_provider()
+            api_key = AppConfig.get_api_key(ai_provider)
+            ai_model = AppConfig.get_ai_model(ai_provider)
+            if ai_provider != "ollama" and not api_key:
+                print(f"⚠️  [OMITIDO] No hay API Key para {ai_provider}. Se omitirá el filtrado con LLM.")
+            else:
+                self.ai_client = AIClientManager(provider=ai_provider, api_key=api_key, model=ai_model)
+                print(f"✅ Cliente IA inicializado: {ai_provider.upper()} (modelo: {ai_model or 'default'})")
+        except Exception as e:
+            print(f"⚠️  [FALLO] No se pudo inicializar el cliente de IA: {e}. Se omitirá el filtrado con LLM.")
+        
+        return self.rh_client is not None or self.hn_client is not None
+
+    async def _search_papers(self) -> List[Dict[str, Any]]:
+        """Paso A: Busca papers para cada topic y los devuelve combinados y deduplicados."""
+        print("\n--- PASO A: Búsqueda de Papers Académicos ---")
+        if not self.rh_client:
+            print("  [OMITIDO] El cliente de Research Hub no está disponible.")
+            return []
+        
+        all_papers: List[Dict[str, Any]] = []
+        for topic in self.topics:
+            print(f"  -> Buscando topic: '{topic}'...")
+            try:
+                res = await self.rh_client.call_tool("search_papers", {"query": topic, "limit": MAX_RESULTS_PER_TOPIC})
+                papers = parse_text_response_to_papers(extract_text(res), topic)
+                all_papers.extend(papers)
+                print(f"     Encontrados {len(papers)} resultados.")
+            except Exception as e:
+                print(f"     [FALLO] Error buscando topic '{topic}': {e}")
+        
+        # Deduplicado por DOI
+        seen_dois = set()
+        unique_papers = [p for p in all_papers if p.get("doi") not in seen_dois and not seen_dois.add(p.get("doi"))]
+        
+        print(f"\n✨ [ÉXITO] Total de papers únicos encontrados: {len(unique_papers)}")
+        return unique_papers
+
+    async def _select_and_download_papers(self, papers: List[Dict[str, Any]]):
+        """Pasos B y C: Selecciona DOIs para descargar y ejecuta la descarga en paralelo."""
+        print("\n--- PASOS B & C: Selección y Descarga de PDFs ---")
+        if not self.rh_client:
+            print("  [OMITIDO] El cliente de Research Hub no está disponible.")
+            return
+
+        # Paso B: Selección
+        selected_dois = [p['doi'] for p in papers if p.get('is_valid_doi')]
+        if not DOWNLOAD_ALL_PAPERS:
+            selected_dois = selected_dois[:SELECT_TOP_K]
+            print(f"  -> Selección: TOP {SELECT_TOP_K} papers ({len(selected_dois)} con DOI válido).")
+        else:
+            print(f"  -> Selección: TODOS los papers ({len(selected_dois)} con DOI válido).")
+        
+        if not selected_dois:
+            print("  [AVISO] No hay DOIs válidos para descargar.")
+            return
+
+        await self._save_json("02_dois_seleccionados.json", {"dois": selected_dois})
+
+        # Paso C: Descarga
+        print(f"  -> Descargando {len(selected_dois)} papers en paralelo (max {MAX_PARALLEL_DOWNLOADS})...")
+        semaphore = asyncio.Semaphore(MAX_PARALLEL_DOWNLOADS)
+        doi_map = {p['doi']: p for p in papers if p.get('doi')}
+
+        async def _download_one(doi: str):
+            async with semaphore:
+                title = doi_map.get(doi, {}).get('title', 'untitled')
+                filename = f"{slugify(title)}_{slugify(doi)}.pdf"
+                try:
+                    res = await self.rh_client.call_tool("download_paper", {"doi": doi, "filename": filename})
+                    raw_text = extract_text(res)
+                    if "Download successful!" in raw_text or "File already exists" in raw_text:
+                        print(f"     ✓ Descargado (o ya existía): {doi}")
+                        return doi, {"status": "ok", "title": title}
+                    print(f"     ✗ Fallo en descarga: {doi}")
+                    return doi, {"status": "failed", "reason": raw_text.strip()}
+                except Exception as e:
+                    print(f"     ✗ Error grave durante la descarga de {doi}: {e}")
+                    return doi, {"status": "error", "reason": str(e)}
+
+        tasks = [_download_one(doi) for doi in selected_dois]
+        results = await asyncio.gather(*tasks)
+        download_manifest = {doi: result for doi, result in results}
+        await self._save_json("03_manifiesto_descarga.json", download_manifest)
+        print("✨ [ÉXITO] Proceso de descarga completado.")
+
+    def _paper_to_bibtex(self, paper: Dict[str, Any]) -> str:
+        """Convierte un diccionario de metadatos de un paper a una entrada BibTeX."""
+        author_lastname = "unknown"
+        if paper.get("authors"):
+            try: author_lastname = slugify(paper["authors"].split(',')[0].split(' ')[-1])
+            except: pass
+        
+        year_str = str(paper.get('year', 'nodate'))
+        title_slug = slugify(paper.get('title', 'notitle')[:10])
+        key = f"{author_lastname}{year_str}{title_slug}"
+
+        entry = f"@article{{{key},\n"
+        if paper.get('title'): entry += f"  title     = {{{{{paper['title']}}}}},\n"
+        if paper.get('authors'): entry += f"  author    = {{{paper['authors']}}},\n"
+        if paper.get('year'): entry += f"  year      = {{{paper['year']}}},\n"
+        if paper.get('journal'): entry += f"  journal   = {{{paper['journal']}}},\n"
+        if paper.get('doi'): entry += f"  doi       = {{{paper['doi']}}},\n"
+        entry += "}"
+        return entry
+        
+    async def _generate_bibliography(self, papers: List[Dict[str, Any]]):
+        """Paso D: Genera una bibliografía completa a partir de los metadatos recolectados."""
+        print("\n--- PASO D: Generación de Bibliografía ---")
+        papers_with_doi = [p for p in papers if p.get('is_valid_doi')]
+        if not papers_with_doi:
+            print("  [OMITIDO] No se encontraron papers con DOI válido para generar bibliografía.")
+            return
+
+        print(f"  -> Usando metadatos de {len(papers_with_doi)} papers.")
+        bib_entries = [self._paper_to_bibtex(p) for p in papers_with_doi]
+        await self._save_bib("bibliografia_final.bib", "\n\n".join(bib_entries))
+        print("✨ [ÉXITO] Bibliografía generada.")
+
+    async def _search_hackernews(self) -> Dict[str, Any]:
+        """
+        Paso E: Busca en Hacker News para cada topic.
+        MEJORA: Maneja explícitamente errores de JSON y guarda la respuesta cruda.
+        """
+        print("\n--- PASO E: Búsqueda en Hacker News ---")
+        if not self.hn_client:
+            print("  [OMITIDO] El cliente de Hacker News no está disponible.")
+            return {}
+
+        all_results = {}
+        for topic in self.topics:
+            print(f"  -> Buscando en HN: '{topic}'...")
+            raw_response_text = ""
+            try:
+                params = {"query": topic, "max_results": MAX_HN_RESULTS_PER_TOPIC}
+                response = await self.hn_client.call_tool("getStories", params)
+                
+                stories = []
+                # El problema puede estar aquí: la respuesta puede ser un texto vacío o un error HTML
+                raw_response_text = extract_text(response)
+                if not raw_response_text.strip():
+                     print(f"     [AVISO] Respuesta vacía del servidor para '{topic}'.")
+                     all_results[topic] = []
+                     continue
+
+                # Intentamos decodificar el JSON
+                response_json = json.loads(raw_response_text)
+                
+                # Asumimos que la respuesta es una lista de historias (o un dict con 'hits')
+                story_items = response_json if isinstance(response_json, list) else response_json.get('hits', [])
+
+                all_results[topic] = story_items
+                print(f"     Encontrados {len(story_items)} resultados.")
+            
+            except json.JSONDecodeError as e:
+                log_filename = f"hackernews_error_response_{slugify(topic)}.log"
+                error_msg = f"     [FALLO] El servidor HN no devolvió un JSON válido para '{topic}'. Error: {e}"
+                print(error_msg)
+                await self._save_log(log_filename, f"{error_msg}\n\n--- RESPUESTA RECIBIDA ---\n{raw_response_text}")
+                all_results[topic] = []
+            except Exception as e:
+                print(f"     [FALLO] Error inesperado buscando en HN para '{topic}': {e}")
+                all_results[topic] = []
+        
+        print("✨ [ÉXITO] Búsqueda en Hacker News completada.")
+        return all_results
+
+    async def _filter_with_llm(self, hn_results: Dict[str, List[Dict]]) -> Dict[str, Any]:
+        """Paso F: Usa un LLM para validar la relevancia de los resultados de Hacker News."""
+        print("\n--- PASO F: Filtrado de HN con LLM ---")
+        if not self.ai_client:
+            print("  [OMITIDO] Cliente de IA no disponible.")
+            return hn_results
+        
+        final_results = {}
+        for topic, stories in hn_results.items():
+            if not stories:
+                final_results[topic] = []
+                continue
+
+            print(f"  -> Pidiendo al LLM que valide {len(stories)} historias para: '{topic}'...")
+            titles_str = "\n".join([f"{i+1}. {s.get('title', 'N/A')}" for i, s in enumerate(stories)])
+            
+            prompt = (
+                f"Identify which of the following Hacker News titles are relevant to the research topic: '{topic}'.\n\n"
+                "A title is relevant if it discusses the topic directly, not if it just uses some of the same words in a different context.\n\n"
+                f"Candidate Titles:\n{titles_str}\n\n"
+                "Return a JSON object with a single key 'relevant_indices', a list of the numbers of relevant titles. Example: {\"relevant_indices\": [1, 4, 5]}.\n"
+                "If none are relevant, return an empty list. Respond ONLY with the JSON object."
+            )
+
+            try:
+                response_text = await self.ai_client.chat_completion(prompt)
+                json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
+                response_json = json.loads(json_match.group(0)) if json_match else {}
+                relevant_indices = response_json.get("relevant_indices", [])
+                
+                filtered = [stories[i-1] for i in relevant_indices if 0 < i <= len(stories)]
+                final_results[topic] = filtered
+                print(f"     LLM identificó {len(filtered)} historias relevantes.")
+            except Exception as e:
+                print(f"     [FALLO] Error con el LLM para '{topic}': {e}. Se mantienen resultados sin filtrar.")
+                final_results[topic] = stories
+        
+        print("✨ [ÉXITO] Filtrado con LLM completado.")
+        return final_results
+
+    async def run(self):
+        """Ejecuta el flujo completo de investigación."""
+        print(f"\n[{now_str()}] 🚀 Iniciando Asistente de Investigación…")
+        await self.setup_output_dirs()
+        
+        if not await self.connect_services():
+            print("\n❌ [ERROR] No se pudo conectar a los servicios necesarios. Abortando.")
+            return
+
+        try:
+            # Flujo de Research Hub
+            found_papers = await self._search_papers()
+            if found_papers:
+                await self._save_json("01_papers_encontrados.json", found_papers)
+                await self._save_csv("01_papers_encontrados.csv", found_papers)
+                await self._select_and_download_papers(found_papers)
+                await self._generate_bibliography(found_papers)
+            
+            # Flujo de Hacker News
+            hackernews_results = await self._search_hackernews()
+            await self._save_json("04_hackernews_raw.json", hackernews_results)
+            
+            final_hn_results = await self._filter_with_llm(hackernews_results)
+            await self._save_json("05_hackernews_filtrado_llm.json", final_hn_results)
+            
+            print(f"\n🎉 [{now_str()}] Proceso completado con éxito.")
+
+        finally:
+            print("\n🏁 Finalizando y cerrando conexiones…")
+            if self.mcp_manager:
+                await self.mcp_manager.close_all_clients()
+                print("   [ÉXITO] Conexiones MCP cerradas.")
+
+async def main():
+    """Punto de entrada principal del script."""
+    try:
+        async with aiofiles.open("terminos.txt", "r", encoding="utf-8") as f:
+            terminos = [t.strip() for t in (await f.read()).splitlines() if t.strip()]
+        if not terminos:
+            print("⚠️  'terminos.txt' está vacío. No hay nada que procesar.")
+            return
+    except FileNotFoundError:
+        print("❌ ERROR: No se encontró 'terminos.txt'. Por favor, crea el archivo con los temas a investigar.")
+        return
+    
+    topics = terminos[:MAX_TOPICS]
+    print(f"✅ Temas a investigar ({len(topics)}): {topics}")
+    
+    assistant = AdvancedResearchAssistant(topics)
+    await assistant.run()
+
+if __name__ == "__main__":
+    if os.name == 'nt':
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+    asyncio.run(main())
+
+
+---
+File: /research_assistant.py
+---
+
+# research_assistant.py
+# ============================================================
+# Flujo de investigación con rust-research-mcp (MCP server)
+# 1. Busca papers por temas para descubrir DOIs.
+# 2. Descarga los papers seleccionados.
+# 3. Vuelve a consultar cada DOI para obtener metadatos enriquecidos (autores, etc.).
+# 4. Genera una bibliografía completa con los datos enriquecidos.
+# ============================================================
+
+import asyncio
+import json
+import os
+import re
+import csv
+from datetime import datetime
+from typing import Any, Iterable, List, Dict, Optional
+
+from dotenv import load_dotenv
+import aiofiles
+import aiofiles.os
+
+# Módulos del proyecto
+from config_manager import ServerConfig
+from mcp_client_manager import MCPClientManager, RemoteMCPClient
+
+load_dotenv()
+
+# ============================================================
+# 🔧 PARÁMETROS CONFIGURABLES
+# ============================================================
+
+def env_bool(name: str, default: bool) -> bool:
+    val = os.getenv(name, str(default)).strip().lower()
+    return val in ("1", "true", "t", "yes", "y", "on")
+
+def env_int(name: str, default: int) -> int:
+    val = os.getenv(name)
+    return int(val) if val and val.isdigit() else default
+
+# ——— Control de salidas ———
+SEPARATE_RUNS_IN_SUBFOLDER: bool = env_bool("SEPARATE_RUNS_IN_SUBFOLDER", True)
+RUN_TAG: Optional[str] = os.getenv("RUN_TAG")
+
+# ——— Búsqueda y filtrado ———
+MAX_TOPICS: int = env_int("MAX_TOPICS", 10)
+MAX_RESULTS_PER_TOPIC: int = env_int("MAX_RESULTS_PER_TOPIC", 10)
+
+# ——— Descarga de PDFs ———
+DOWNLOAD_ALL_PAPERS: bool = env_bool("DOWNLOAD_ALL_PAPERS", False)
+SELECT_TOP_K: int = env_int("SELECT_TOP_K", 5)
+MAX_PARALLEL_DOWNLOADS: int = env_int("MAX_PARALLEL_DOWNLOADS", 4)
+
+# ============================================================
+# Constantes y Utilidades
+# ============================================================
+DOI_REGEX = re.compile(r'^10\.\d{4,9}/.+$')
+
+# Directorios de salida globales
+SALIDAS_DIR, CSV_DIR, LOGS_DIR, BIB_DIR, JSON_DIR = "", "", "", "", ""
+DOWNLOADS_DIR = ""
+
+async def setup_output_dirs() -> None:
+    """Configura los directorios de salida y descarga de forma asíncrona."""
+    global SALIDAS_DIR, CSV_DIR, LOGS_DIR, BIB_DIR, JSON_DIR, DOWNLOADS_DIR
+    
+    DOWNLOADS_DIR = os.getenv("RESEARCH_PAPERS_DIR", os.path.join(os.getcwd(), "ResearchPapers"))
+    
+    base = "salidas"
+    if SEPARATE_RUNS_IN_SUBFOLDER:
+        tag = RUN_TAG or datetime.now().strftime("%Y%m%d_%H%M%S")
+        base = os.path.join(base, tag)
+    
+    SALIDAS_DIR = base
+    CSV_DIR, LOGS_DIR, BIB_DIR, JSON_DIR = (os.path.join(base, d) for d in ["csv", "logs", "bib", "json"])
+    
+    for d in (base, CSV_DIR, LOGS_DIR, BIB_DIR, JSON_DIR, DOWNLOADS_DIR):
+        await aiofiles.os.makedirs(d, exist_ok=True)
+
+def slugify(s: str) -> str:
+    s = str(s).lower().strip()
+    s = re.sub(r'[\s\W-]+', '-', s)
+    s = s.strip('-')
+    return s[:75] if len(s) > 75 else s
+
+async def guardar_csv(nombre: str, rows: List[Dict[str, Any]]) -> None:
+    path = os.path.join(CSV_DIR, nombre)
+    if not rows: return
+    async with aiofiles.open(path, "w", encoding="utf-8-sig", newline="") as f:
+        fields = list(rows[0].keys())
+        await f.write(",".join(fields) + "\n")
+        for row in rows:
+            values = [f'"{str(row.get(k, "")).replace("\"", "\"\"")}"' for k in fields]
+            await f.write(",".join(values) + "\n")
+    print(f"💾 CSV guardado: {path} ({len(rows)} filas)")
+
+async def guardar_json(nombre: str, data: Any) -> None:
+    path = os.path.join(JSON_DIR, nombre)
+    async with aiofiles.open(path, "w", encoding="utf-8") as f:
+        await f.write(json.dumps(data, ensure_ascii=False, indent=2))
+    print(f"💾 JSON guardado: {path}")
+
+async def guardar_bib(nombre: str, contenido: str) -> None:
+    path = os.path.join(BIB_DIR, nombre)
+    async with aiofiles.open(path, "w", encoding="utf-8") as f:
+        await f.write(contenido)
+    print(f"📚 Bibliografía guardada: {path}")
+
+def extract_text(blobs: Optional[Iterable[Any]]) -> str:
+    parts: List[str] = []
+    if not blobs: return ""
+    for b in blobs:
+        if hasattr(b, "text"): parts.append(getattr(b, "text", "") or "")
+        elif isinstance(b, str): parts.append(b)
+    return "\n".join(parts).strip()
+
+def parse_text_response_to_papers(raw_text: str, topic: str) -> List[Dict[str, Any]]:
+    """Parsea la respuesta de texto formateada del servidor Rust para la búsqueda."""
+    papers = []
+    content = raw_text.split('\n\n', 1)[-1]
+    paper_blocks = re.split(r'\n\n(?=\d+\.\s)', content)
+
+    for block in paper_blocks:
+        if not block.strip(): continue
+        paper_data = {"topic": topic, "title": None, "doi": None, "source": None, "year": None}
+        
+        title_match = re.search(r'^\d+\.\s*(.*?)\s*\(Relevance:', block)
+        if title_match: paper_data['title'] = title_match.group(1).strip()
+        
+        doi_match = re.search(r'📖\s*DOI:\s*(.*)', block)
+        if doi_match:
+            doi_str = doi_match.group(1).strip()
+            paper_data['doi'] = doi_str if doi_str and " " not in doi_str else None
+
+        source_match = re.search(r'🔍\s*Source:\s*(.*)', block)
+        if source_match: paper_data['source'] = source_match.group(1).strip()
+            
+        year_match = re.search(r'📅\s*Year:\s*(\d{4})', block)
+        if year_match: paper_data['year'] = int(year_match.group(1).strip())
+            
+        if paper_data.get('title'):
+            paper_data['url'] = f"https://doi.org/{paper_data['doi']}" if paper_data.get('doi') else None
+            paper_data['is_valid_doi'] = bool(paper_data['doi'] and DOI_REGEX.match(paper_data['doi']))
+            papers.append(paper_data)
+            
+    return papers
+
+async def step_a_search_papers(rh_client: RemoteMCPClient, topics: List[str]) -> List[Dict[str, Any]]:
+    """Busca papers para cada topic y los devuelve combinados y deduplicados."""
+    all_papers = []
+    for topic in topics:
+        print(f"\n--- 🔎 Buscando topic: '{topic}' ---")
+        try:
+            res = await rh_client.call_tool("search_papers", {"query": topic, "limit": MAX_RESULTS_PER_TOPIC})
+            raw_text_content = extract_text(res)
+            papers = parse_text_response_to_papers(raw_text_content, topic)
+            all_papers.extend(papers)
+            print(f"  -> Encontrados {len(papers)} resultados para '{topic}'.")
+        except Exception as e:
+            print(f"  ✗ Error buscando topic '{topic}': {e}")
+    
+    seen_dois = set()
+    unique_papers = []
+    for p in all_papers:
+        doi = p.get("doi")
+        if doi and doi not in seen_dois:
+            seen_dois.add(doi)
+            unique_papers.append(p)
+        elif not doi:
+             unique_papers.append(p)
+    
+    print(f"\n✨ Total de papers únicos encontrados: {len(unique_papers)}")
+    return unique_papers
+
+async def step_b_select_papers(papers: List[Dict[str, Any]]) -> List[str]:
+    """Filtra y selecciona los DOIs válidos para descargar."""
+    print("\n--- 🧠 Seleccionando papers para descarga ---")
+    
+    selected_dois = [p['doi'] for p in papers if p.get('is_valid_doi')]
+    
+    if DOWNLOAD_ALL_PAPERS:
+        print(f"  -> Selección: TODOS ({len(selected_dois)} papers)")
+        return selected_dois
+    else:
+        print(f"  -> Selección: TOP {SELECT_TOP_K} (usando los primeros encontrados)")
+        return selected_dois[:SELECT_TOP_K]
+
+async def step_c_download_papers(rh_client: RemoteMCPClient, dois: List[str], papers_metadata: List[Dict]) -> Dict[str, Dict]:
+    """Descarga los papers seleccionados en paralelo."""
+    if not dois: return {}
+    print(f"\n--- 📥 Descargando {len(dois)} papers en paralelo (max {MAX_PARALLEL_DOWNLOADS}) ---")
+    semaphore = asyncio.Semaphore(MAX_PARALLEL_DOWNLOADS)
+    
+    doi_map = {p['doi']: p for p in papers_metadata if p.get('doi')}
+
+    async def _download_one(doi: str):
+        async with semaphore:
+            title = doi_map.get(doi, {}).get('title', 'untitled')
+            filename = f"{slugify(title)}_{slugify(doi)}.pdf"
+            try:
+                res = await rh_client.call_tool("download_paper", {"doi": doi, "filename": filename, "directory": DOWNLOADS_DIR})
+                raw_response_text = extract_text(res)
+                
+                success_match = re.search(r'File:\s*(.*?)\n', raw_response_text)
+                
+                if ("Download successful!" in raw_response_text or "File already exists" in raw_response_text) and success_match:
+                    file_path = success_match.group(1).strip()
+                    print(f"  ✓ Descargado (o ya existía): {doi}")
+                    return doi, {"status": "ok", "path": file_path, "title": title}
+                else:
+                    print(f"  ✗ Fallo en descarga: {doi}")
+                    return doi, {"status": "failed", "reason": raw_response_text.strip()}
+
+            except Exception as e:
+                print(f"  ✗ Error grave durante la descarga de {doi}: {e}")
+                return doi, {"status": "error", "reason": str(e)}
+
+    tasks = [_download_one(doi) for doi in dois]
+    results = await asyncio.gather(*tasks)
+    return {doi: result for doi, result in results}
+
+def paper_dict_to_bibtex_entry(paper: Dict[str, Any]) -> str:
+    """Convierte un diccionario de paper enriquecido en una entrada BibTeX string."""
+    # Crea una clave única a partir del primer autor y año
+    author_lastname = "unknown"
+    if paper.get("authors"):
+        try:
+            author_lastname = slugify(paper["authors"].split(',')[0].split(' ')[-1])
+        except: # noqa
+            pass # Mantener 'unknown' si el formato del autor es inesperado
+    
+    year_str = str(paper.get('year', 'nodate'))
+    key = f"{author_lastname}{year_str}"
+
+    entry = f"@article{{{key},\n"
+    if paper.get('title'):
+        entry += f"  title     = {{{{{paper['title']}}}}},\n"
+    if paper.get('authors'):
+        entry += f"  author    = {{{paper['authors']}}},\n"
+    if paper.get('year'):
+        entry += f"  year      = {{{paper['year']}}},\n"
+    if paper.get('journal'):
+        entry += f"  journal   = {{{paper['journal']}}},\n"
+    if paper.get('doi'):
+        entry += f"  doi       = {{{paper['doi']}}},\n"
+    entry += "}"
+    return entry
+
+async def step_d_generate_bibliography(rh_client: RemoteMCPClient, papers: List[Dict[str, Any]]) -> str:
+    """Enriquece los metadatos de los papers y genera una bibliografía completa."""
+    papers_with_doi = [p for p in papers if p.get('is_valid_doi')]
+    if not papers_with_doi:
+        return "% No se encontraron papers con DOI válido para generar la bibliografía."
+
+    print(f"\n--- 📚 Generando Bibliografía ---")
+    print(f"  -> Enriqueciendo metadatos para {len(papers_with_doi)} papers...")
+
+    enriched_papers = []
+    for paper in papers_with_doi:
+        try:
+            print(f"     - Obteniendo detalles para DOI: {paper['doi']}")
+            # Llama a search_papers con el DOI para obtener metadatos ricos
+            res = await rh_client.call_tool("search_papers", {"query": paper['doi'], "limit": 1})
+            raw_text = extract_text(res)
+            
+            # Parsea la respuesta rica (puede tener más campos)
+            # Usamos un parser simple aquí, asumiendo un formato similar
+            enriched_data = paper.copy() # Empezamos con los datos que ya tenemos
+            
+            authors_match = re.search(r'👤\s*Authors:\s*(.*)', raw_text)
+            if authors_match:
+                enriched_data['authors'] = authors_match.group(1).strip()
+
+            journal_match = re.search(r' L Journal:\s*(.*)', raw_text)
+            if journal_match:
+                enriched_data['journal'] = journal_match.group(1).strip()
+            
+            enriched_papers.append(enriched_data)
+        except Exception as e:
+            print(f"  ✗ Error enriqueciendo {paper.get('doi')}: {e}. Usando datos básicos.")
+            enriched_papers.append(paper) # Añadir con datos básicos si falla
+
+    print(f"  -> Creando entradas BibTeX...")
+    bib_entries = [paper_dict_to_bibtex_entry(p) for p in enriched_papers]
+        
+    print("  -> Bibliografía generada con éxito.")
+    return "\n\n".join(bib_entries)
+
+def construir_topics_desde_terminos(terminos: List[str], max_topics: int) -> List[str]:
+    if not terminos: return ["model context protocol"]
+    topics_a_buscar = terminos[:max_topics]
+    print(f"✅ Construidos {len(topics_a_buscar)} topics para la búsqueda: {topics_a_buscar}")
+    return topics_a_buscar
+
+async def main():
+    """Flujo principal que orquesta la investigación."""
+    await setup_output_dirs()
+    
+    try:
+        async with aiofiles.open("terminos.txt", "r", encoding="utf-8") as f:
+            contenido = await f.read()
+        terminos = [t.strip() for t in contenido.splitlines() if t.strip()]
+        if not terminos:
+            print("⚠️  El archivo 'terminos.txt' está vacío. No hay nada que procesar.")
+            return
+    except FileNotFoundError:
+        print("❌ ERROR: El archivo 'terminos.txt' no se encontró.")
+        return
+
+    topics = construir_topics_desde_terminos(terminos, MAX_TOPICS)
+    
+    print(f"\nIniciando Asistente de Investigación...")
+    print(f"📂 Salidas en: {SALIDAS_DIR}")
+    print(f"📥 PDFs se guardarán en: {DOWNLOADS_DIR}")
+    
+    server_configs = ServerConfig.get_server_configs()
+    mcp_manager = MCPClientManager(server_configs)
+    
+    try:
+        print("\n🔗 Conectando al servidor de Research Hub...")
+        await mcp_manager._connect_single_server("research_hub", server_configs["research_hub"])
+        rh_client = mcp_manager.get_client("research_hub")
+        if not rh_client:
+            print("❌ No se pudo conectar al servidor de Research Hub. Abortando.")
+            return
+        print("✅ Conectado.")
+
+        found_papers = await step_a_search_papers(rh_client, topics)
+        if not found_papers:
+            print("\n⚠️ No se encontraron papers en ninguna de las búsquedas. Terminando.")
+            return
+        
+        await guardar_json("00_resultados_completos.json", found_papers)
+        await guardar_csv("01_papers_encontrados.csv", found_papers)
+        
+        selected_dois = await step_b_select_papers(found_papers)
+        if not selected_dois:
+            print("\n⚠️ No se seleccionaron papers con DOI válido para descargar.")
+        else:
+            await guardar_json("02_dois_seleccionados.json", {"dois": selected_dois})
+            download_manifest = await step_c_download_papers(rh_client, selected_dois, found_papers)
+            await guardar_json("03_manifiesto_descarga.json", download_manifest)
+
+        bib_content = await step_d_generate_bibliography(rh_client, found_papers)
+        await guardar_bib("bibliografia_final.bib", bib_content)
+        
+        print("\n🎉 Proceso completado con éxito.")
+
+    finally:
+        print("\n🏁 Finalizando y cerrando conexiones...")
+        await mcp_manager.close_all_clients()
+
+if __name__ == "__main__":
+    if os.name == 'nt':
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+    asyncio.run(main())
